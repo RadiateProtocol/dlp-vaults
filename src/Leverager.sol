@@ -21,7 +21,7 @@ import "./DLPVault.sol";
 /// @title Leverager Contract
 /// @author Radiant
 /// @dev All function calls are currently implemented without side effects
-contract Leverager is Ownable {
+contract Leverager is Ownable, MFDLogic {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -62,9 +62,6 @@ contract Leverager is Ownable {
     /// @notice RDNT address
     address public rdnt;
 
-    /// @notice mfd
-    IMultiFeeDistribution public mfd;
-
     /// @notice Treasury address
     address public treasury;
 
@@ -99,12 +96,7 @@ contract Leverager is Ownable {
         IAaveOracle _aaveOracle,
         IChefIncentivesController _cic,
         AggregatorV3Interface _chainlink,
-        IMultiFeeDistribution _mfd,
-        address _owner,
-        address _rdnt,
-        DLPVault _vault,
-        uint256 _feePercent,
-        address _treasury
+        IMultiFeeDistribution _mfd
     ) {
         require(address(_lendingPool) != (address(0)), "Not a valid address");
         require(
@@ -115,10 +107,6 @@ contract Leverager is Ownable {
         require(address(_cic) != (address(0)), "Not a valid address");
         require(address(_chainlink) != (address(0)), "Not a valid address");
         require(address(_mfd) != (address(0)), "Not a valid address");
-        require(address(_rdnt) != (address(0)), "Not a valid address");
-        require(address(_vault) != (address(0)), "Not a valid address");
-        require(_treasury != address(0), "Not a valid address");
-        require(_feePercent <= 1e4, "Invalid ratio");
 
         lendingPool = _lendingPool;
         eligibilityDataProvider = _rewardEligibleDataProvider;
@@ -126,13 +114,27 @@ contract Leverager is Ownable {
         cic = _cic;
         mfd = _mfd;
         chainlink = _chainlink;
+    }
+
+    /// @notice Avoid stack too deep errors with second initialize
+    function initialize(
+        address _owner,
+        address _rdnt,
+        DLPVault _vault,
+        uint256 _feePercent,
+        address _treasury
+    ) public {
+        if (owner != address(0)) revert("Already Initialized");
+        require(address(_rdnt) != (address(0)), "Not a valid address");
+        require(address(_vault) != (address(0)), "Not a valid address");
+        require(_treasury != address(0), "Not a valid address");
+        require(_feePercent <= 1e4, "Invalid ratio");
         rdnt = _rdnt;
         vault = _vault;
         feePercent = _feePercent;
         treasury = _treasury;
         owner = _owner;
     }
-    
 
     /**
      * @notice Require Owner
@@ -242,6 +244,7 @@ contract Leverager is Ownable {
         uint256 interestRateMode,
         uint256 borrowRatio,
         uint256 loopCount,
+        uint256 lockIndex,
         bool isBorrow
     ) external onlyUserOwner {
         require(borrowRatio <= RATIO_DIVISOR, "Invalid ratio");
@@ -297,7 +300,18 @@ contract Leverager is Ownable {
 
         uint256 dlpBorrowed = vault.borrow(requiredAmount, msg.sender);
         if (dlpBorrowed < requiredAmount) revert("Not enough borrow");
-        mfd.stake()
+        if (
+            IERC20(vault.DLPAddress).allowance(
+                address(this),
+                address(lendingPool)
+            ) == 0
+        ) {
+            IERC20(vault.DLPAddress).safeApprove(
+                address(mfd),
+                type(uint256).max
+            );
+        }
+        _stake(dlpBorrowed, lockIndex);
     }
 
     /**
@@ -358,23 +372,28 @@ contract Leverager is Ownable {
         return requiredVal;
     }
 
-    /**
-     * @dev transfer ETH to an address, revert if it fails.
-     * @param to recipient of the transfer
-     * @param value the amount to send
-     */
-    function _safeTransferETH(address to, uint256 value) internal {
-        (bool success, ) = to.call{value: value}(new bytes(0));
-        require(success, "ETH_TRANSFER_FAILED");
-    }
+    /*
+     * @notice Set default lock index
+     **/
 
-    /**
-     * @notice Set Multi fee distribution contract.
-     * @param _mfdAddr New contract address.
-     */
-    function setMfd(address _mfdAddr) external onlyOwner {
-        require(address(_mfdAddr) != address(0), "MFD can't be 0 address");
-        mfd = IMultiFeeDistribution(_mfdAddr);
+    // relock
+    // individual early exit
+    // getReward
+    // withdraw
+
+    /*
+     * @notice Exit DLP Position, take penalty and repay loan. Autoclaims rewards.
+     **/
+    function exit() public onlyUserOwner {
+        _exit();
+        uint256 repayAmt = IERC20(vault.DLPAddress).balanceOf(address(this));
+        vault.repayBorrow(repayAmt);
+        DLPBorrowed -= repayAmt;
+        // If user withdraws collateral and exits in same tx, could lead to shortfall
+        require(
+            healthFactor() <= MINHEALTHFACTOR,
+            "Exit: Health factor too low"
+        );
     }
 
     /*
@@ -383,6 +402,16 @@ contract Leverager is Ownable {
     function DLPPrice() public view returns (uint256) {
         // Calculate price of 80-20 Balancer LP scaled by 1e6
         return 1e6 * 80 + (chainlink.getPrice(rdnt) * 20) / 100;
+    }
+
+    /*
+     * @notice If there's DLP from someone calling withdrawExpiredLocksFor
+     * Call function on tend rewards
+     **/
+    function repayLoan() public {
+        uint256 repayAmt = IERC20(vault.DLPAddress).balanceOf(address(this));
+        vault.repayBorrow(repayAmt);
+        DLPBorrowed -= repayAmt;
     }
 
     /*
@@ -413,7 +442,7 @@ contract Leverager is Ownable {
     /*
      *   @notice Liquidate the user DLP if they are under the threshold
      **/
-    function liquidate() external view returns (uint256) {
+    function liquidate() public returns (uint256) {
         require(healthFactor() > MINHEALTHFACTOR, "CANNOT LIQUIDATE");
         DLP.transferFrom(address(this), msg.sender, DLPBorrowed);
         // Allow liquidator the entire amount – alternatively could auto unloop user
