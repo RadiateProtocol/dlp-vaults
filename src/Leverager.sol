@@ -5,9 +5,9 @@ pragma abicoder v2;
 import "openzeppelin-contracts/contracts/utils/math/SafeMath.sol";
 import "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
-import "openzeppelin-contracts/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "openzeppelin-contracts/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "openzeppelin-contracts/contracts-upgradeable/security/PausableUpgradeable.sol";
+import "openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
+import "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
+import "openzeppelin-contracts-upgradeable/contracts//security/PausableUpgradeable.sol";
 
 import "./interfaces/radiant-interfaces/uniswap/IUniswapV2Router01.sol";
 import "./interfaces/radiant-interfaces/ILendingPool.sol";
@@ -72,9 +72,7 @@ contract Leverager is
      * @param _chainlink aggregatorV3 address.
      * @param _mfd MultiFeeDistribution address.
      * @param _vault DLP Vault address.
-     * @param _treasury Treasury address.
      * @param _userOwner Address of the user owner.
-     * @param _feePercent Percent for looping.
      */
     function initialize(
         ILendingPool _lendingPool,
@@ -85,9 +83,7 @@ contract Leverager is
         AggregatorV3Interface _chainlink,
         IMultiFeeDistribution _mfd,
         DLPVault _vault,
-        address _treasury,
-        address _userOwner,
-        uint256 _feePercent
+        address _userOwner
     ) public MFDLogic(_mfd) initializer {
         require(address(_lendingPool) != (address(0)), "Not a valid address");
         require(address(_uniswapRouter) != (address(0)), "Not a valid address");
@@ -100,16 +96,15 @@ contract Leverager is
         require(address(_vault) != (address(0)), "Not a valid address");
         require(_treasury != address(0), "Not a valid address");
         require(_userOwner != address(0), "Not a valid address");
-        require(_feePercent <= 1e4, "Invalid fee ratio");
         lendingPool = _lendingPool;
         uniswapRouter = _uniswapRouter;
         eligibilityDataProvider = _rewardEligibleDataProvider;
         aaveOracle = _aaveOracle;
         cic = _cic;
         vault = _vault;
-        treasury = _treasury;
         userOwner = _userOwner;
-        feePercent = _feePercent;
+        __Ownable_init();
+        __Pausable_init();
     }
 
     /******************
@@ -121,15 +116,6 @@ contract Leverager is
 
     /// @notice userOwner
     address public userOwner;
-
-    /// @notice Fee ratio
-    uint256 public feePercent;
-
-    /// @notice Emitted when fee ratio is updated
-    event FeePercentUpdated(uint256 _feePercent);
-
-    /// @notice Emitted when treasury is updated
-    event TreasuryUpdated(address indexed _treasury);
 
     /**
      * @notice Require UserOwner
@@ -144,7 +130,8 @@ contract Leverager is
      * @param _newOwner address
      */
     function changeUserOwner(address _newOwner) external onlyUserOwner {
-        owner = _newOwner;
+        owner.transferLeverager(userOwner, msg.sender);
+        userOwner = _newOwner;
     }
 
     /**
@@ -152,26 +139,6 @@ contract Leverager is
      */
     fallback() external payable {
         revert("Fallback not allowed");
-    }
-
-    /**
-     * @notice Sets Looping fee ratio
-     * @param _feePercent fee ratio.
-     */
-    function setFeePercent(uint256 _feePercent) external onlyOwner {
-        require(_feePercent <= 1e4, "Invalid ratio");
-        feePercent = _feePercent;
-        emit FeePercentUpdated(_feePercent);
-    }
-
-    /**
-     * @notice Sets new treasury address
-     * @param _treasury address
-     */
-    function setTreasury(address _treasury) external onlyOwner {
-        require(_treasury != address(0), "treasury is 0 address");
-        treasury = _treasury;
-        emit TreasuryUpdated(_treasury);
     }
 
     /*****************
@@ -232,6 +199,8 @@ contract Leverager is
     ) external onlyUserOwner {
         require(borrowRatio <= RATIO_DIVISOR, "Invalid ratio");
         uint16 referralCode = 0;
+        address treasury = owner.treasury();
+        uint256 feePercent = owner.feePercent();
         uint256 fee;
         if (!isBorrow) {
             IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
@@ -359,23 +328,13 @@ contract Leverager is
      * Rewards Logic  *
      ******************/
 
-    event RewardBaseTokensUpdated(address[] tokens);
-
-    /**
-     * @notice Array of reward tokens
-     * @param _tokens array of tokens to be used as base tokens for rewards
-     */
-    function addRewardBaseTokens(address[] memory _tokens) external onlyOwner {
-        rewardBaseTokens = _tokens;
-        emit RewardBaseTokensUpdated(_tokens);
-    }
-
     /**
      * @notice Claim rewards
      * @dev Claim unlocked rewards, sell them for WETH and send portion of WETH to vault as interest.
      */
     function claim() external {
         _claim();
+        repayLoan(0); // Repay DLP with any unlocked DLP
         uint256 amount = _rewardsToWETH();
         uint256 fee = amount.mul(vault.interestFee).div(RATIO_DIVISOR);
         amount = amount.sub(fee);
@@ -391,6 +350,7 @@ contract Leverager is
      * @dev Sell all rewards to WETH on Uniswap
      */
     function _rewardsToWETH() internal returns (uint256) {
+        address[] memory rewardBaseTokens = rewardPool.getRewardBaseTokens();
         uint256 ethAmount = 0;
         for (uint256 i = 0; i < rewardBaseTokens.length; i += 1) {
             address token = rewardBaseTokens[i];
@@ -480,8 +440,16 @@ contract Leverager is
      * @notice If there's DLP from someone calling withdrawExpiredLocksFor
      * Call function on tend rewards
      **/
-    function repayLoan() public {
+    function repayLoan(uint256 amount) public {
+        if (amount > 0) {
+            vault.dlpaddress().safeTransferFrom(
+                msg.sender,
+                address(this),
+                amount
+            );
+        }
         uint256 repayAmt = IERC20(vault.DLPAddress).balanceOf(address(this));
+        if (repayAmt == 0) return;
         vault.repayBorrow(repayAmt);
         DLPBorrowed -= repayAmt;
     }
@@ -517,8 +485,9 @@ contract Leverager is
     function liquidate() public returns (uint256) {
         require(healthFactor() > MINHEALTHFACTOR, "CANNOT LIQUIDATE");
         DLP.transferFrom(address(this), msg.sender, DLPBorrowed);
+        vault.owner.transferLeverager(userOwner, msg.sender);
         // Allow liquidator the entire amount – alternatively could auto unloop user
+        emit userLiquidated(userOwner, msg.sender, DLPBorrowed);
         userOwner = msg.sender;
-        emit userLiquidated(address(this), msg.sender, DLPBorrowed);
     }
 }
