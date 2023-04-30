@@ -4,11 +4,8 @@ pragma abicoder v2;
 
 import "./interfaces/radiant-interfaces/IMultiFeeDistribution.sol";
 
-// relock
-// individual early exit
-// getReward
-// withdraw
-// exit
+/// @title MFDlogic
+/// @notice MFDlogic is a contract that contains key logic for interacting with MFD.
 contract MFDlogic {
     /// @notice mfd
     IMultiFeeDistribution public mfd;
@@ -16,15 +13,6 @@ contract MFDlogic {
     constructor(IMultiFeeDistribution _mfd) {
         require(address(_mfd) != address(0), "MFD can't be 0 address");
         mfd = _mfd;
-    }
-
-    /**
-     * @notice Set Multi fee distribution contract.
-     * @param _mfdAddr New contract address.
-     */
-    function setMfd(IMultiFeeDistribution _mfdAddr) external onlyOwner {
-        require(address(_mfdAddr) != address(0), "MFD can't be 0 address");
-        mfd = _mfdAddr;
     }
 
     function _stake(uint256 _dlpBorrowed, uint256 _lockIndex) internal {
@@ -36,5 +24,17 @@ contract MFDlogic {
         mfd.exit(True);
     }
 
-    // No withdraw logic – either exit or get liquidated, or
+    // No withdraw logic – either exit or get liquidated.
+
+    function _relock() internal {
+        mfd.relock();
+    }
+
+    function _setRelock() internal {
+        mfd.relock();
+    }
+
+    function _claim() internal {
+        mfd.getReward();
+    }
 }

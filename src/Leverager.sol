@@ -2,44 +2,53 @@
 pragma solidity 0.8.12;
 pragma abicoder v2;
 
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "openzeppelin-contracts/contracts/utils/math/SafeMath.sol";
+import "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
+import "openzeppelin-contracts/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "openzeppelin-contracts/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "openzeppelin-contracts/contracts-upgradeable/security/PausableUpgradeable.sol";
 
+import "./interfaces/radiant-interfaces/uniswap/IUniswapV2Router01.sol";
 import "./interfaces/radiant-interfaces/ILendingPool.sol";
 import "./interfaces/radiant-interfaces/IEligibilityDataProvider.sol";
 import "./interfaces/radiant-interfaces/IChainlinkAggregator.sol";
 import "./interfaces/radiant-interfaces/IChefIncentivesController.sol";
 import "./interfaces/radiant-interfaces/IMultiFeeDistribution.sol";
-// import "./interfaces/radiant-interfaces/ILockZap.sol";
 import "./interfaces/radiant-interfaces/IAaveOracle.sol";
-// import "./interfaces/radiant-interfaces/IWETH.sol";
 import "./interfaces/radiant-interfaces/AggregatorV3Interface.sol";
 import "./DLPVault.sol";
 
 /// @title Leverager Contract
-/// @author Radiant
+/// @author w
 /// @dev All function calls are currently implemented without side effects
-contract Leverager is Ownable, MFDLogic {
+contract Leverager is
+    MFDLogic,
+    Initializable,
+    PausableUpgradeable,
+    OwnableUpgradeable
+{
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
     /// @notice Ratio Divisor
     uint256 public constant RATIO_DIVISOR = 10000;
 
-    /// @notice Loop collateral factor – 80%
-    uint256 public LoopCollateralFactor = 8000;
-
-    /// @notice Amount of DLP borrowed
-    uint256 public DLPBorrowed;
-
     /// @notice Mock ETH address
     address public constant API_ETH_MOCK_ADDRESS =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
+    /// @notice WETH address on Arbitrum
+    address public constant WETH = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
+
+    /// @notice rdnt token address
+    address public constant rdnt = 0x3082CC23568eA640225c2467653dB90e9250AaA0;
+
     /// @notice Lending Pool address
     ILendingPool public lendingPool;
+
+    /// @notice Sushiswap router address
+    IUniswapV2Router01 public uniswapRouter;
 
     /// @notice EligibilityDataProvider contract address
     IEligibilityDataProvider public eligibilityDataProvider;
@@ -47,20 +56,65 @@ contract Leverager is Ownable, MFDLogic {
     /// @notice ChefIncentivesController contract address
     IChefIncentivesController public cic;
 
-    /// @notice Chainlink oracle address
-    AggregatorV3Interface public chainlink;
-
     /// @notice DLPVault address
     DLPVault public vault;
 
     /// @notice Aave oracle address
     IAaveOracle public aaveOracle;
 
-    /// @notice Fee ratio
-    uint256 public feePercent;
+    /**
+     * @notice Constructor
+     * @param _lendingPool Lending Pool address.
+     * @param _uniswapRouter Uniswap router address.
+     * @param _rewardEligibleDataProvider EligibilityProvider address.
+     * @param _aaveOracle address.
+     * @param _cic ChefIncentivesController address.
+     * @param _chainlink aggregatorV3 address.
+     * @param _mfd MultiFeeDistribution address.
+     * @param _vault DLP Vault address.
+     * @param _treasury Treasury address.
+     * @param _userOwner Address of the user owner.
+     * @param _feePercent Percent for looping.
+     */
+    function initialize(
+        ILendingPool _lendingPool,
+        IUniswapV2Router01 _uniswapRouter,
+        IEligibilityDataProvider _rewardEligibleDataProvider,
+        IAaveOracle _aaveOracle,
+        IChefIncentivesController _cic,
+        AggregatorV3Interface _chainlink,
+        IMultiFeeDistribution _mfd,
+        DLPVault _vault,
+        address _treasury,
+        address _userOwner,
+        uint256 _feePercent
+    ) public MFDLogic(_mfd) initializer {
+        require(address(_lendingPool) != (address(0)), "Not a valid address");
+        require(address(_uniswapRouter) != (address(0)), "Not a valid address");
+        require(
+            address(_rewardEligibleDataProvider) != (address(0)),
+            "Not a valid address"
+        );
+        require(address(_aaveOracle) != (address(0)), "Not a valid address");
+        require(address(_cic) != (address(0)), "Not a valid address");
+        require(address(_vault) != (address(0)), "Not a valid address");
+        require(_treasury != address(0), "Not a valid address");
+        require(_userOwner != address(0), "Not a valid address");
+        require(_feePercent <= 1e4, "Invalid fee ratio");
+        lendingPool = _lendingPool;
+        uniswapRouter = _uniswapRouter;
+        eligibilityDataProvider = _rewardEligibleDataProvider;
+        aaveOracle = _aaveOracle;
+        cic = _cic;
+        vault = _vault;
+        treasury = _treasury;
+        userOwner = _userOwner;
+        feePercent = _feePercent;
+    }
 
-    /// @notice RDNT address
-    address public rdnt;
+    /******************
+     * Admin Logic    *
+     ******************/
 
     /// @notice Treasury address
     address public treasury;
@@ -68,81 +122,14 @@ contract Leverager is Ownable, MFDLogic {
     /// @notice userOwner
     address public userOwner;
 
-    /// @notice Owner address
-    address public owner;
+    /// @notice Fee ratio
+    uint256 public feePercent;
 
     /// @notice Emitted when fee ratio is updated
     event FeePercentUpdated(uint256 _feePercent);
 
     /// @notice Emitted when treasury is updated
     event TreasuryUpdated(address indexed _treasury);
-
-    /**
-     * @notice Constructor
-     * @param _lendingPool Address of lending pool.
-     * @param _rewardEligibleDataProvider EligibilityProvider address.
-     * @param _aaveOracle address.
-     * @param _cic ChefIncentivesController address.
-     * @param _chainlink aggregatorV3 address.
-     * @param _mfd MultiFeeDistribution address.
-     * @param _rdnt Radiant Token address.
-     * @param _vault DLPVault address.
-     * @param _feePercent leveraging fee ratio.
-     * @param _treasury address.
-     */
-    constructor(
-        ILendingPool _lendingPool,
-        IEligibilityDataProvider _rewardEligibleDataProvider,
-        IAaveOracle _aaveOracle,
-        IChefIncentivesController _cic,
-        AggregatorV3Interface _chainlink,
-        IMultiFeeDistribution _mfd
-    ) {
-        require(address(_lendingPool) != (address(0)), "Not a valid address");
-        require(
-            address(_rewardEligibleDataProvider) != (address(0)),
-            "Not a valid address"
-        );
-        require(address(_aaveOracle) != (address(0)), "Not a valid address");
-        require(address(_cic) != (address(0)), "Not a valid address");
-        require(address(_chainlink) != (address(0)), "Not a valid address");
-        require(address(_mfd) != (address(0)), "Not a valid address");
-
-        lendingPool = _lendingPool;
-        eligibilityDataProvider = _rewardEligibleDataProvider;
-        aaveOracle = _aaveOracle;
-        cic = _cic;
-        mfd = _mfd;
-        chainlink = _chainlink;
-    }
-
-    /// @notice Avoid stack too deep errors with second initialize
-    function initialize(
-        address _owner,
-        address _rdnt,
-        DLPVault _vault,
-        uint256 _feePercent,
-        address _treasury
-    ) public {
-        if (owner != address(0)) revert("Already Initialized");
-        require(address(_rdnt) != (address(0)), "Not a valid address");
-        require(address(_vault) != (address(0)), "Not a valid address");
-        require(_treasury != address(0), "Not a valid address");
-        require(_feePercent <= 1e4, "Invalid ratio");
-        rdnt = _rdnt;
-        vault = _vault;
-        feePercent = _feePercent;
-        treasury = _treasury;
-        owner = _owner;
-    }
-
-    /**
-     * @notice Require Owner
-     */
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Not owner");
-        _;
-    }
 
     /**
      * @notice Require UserOwner
@@ -153,18 +140,10 @@ contract Leverager is Ownable, MFDLogic {
     }
 
     /**
-     * @notice Sets userOwner
-     * @param _newUserOwner address
-     */
-    function changeUserOwner(address _newUserOwner) external onlyUserOwner {
-        userOwner = _newUserOwner;
-    }
-
-    /**
-     * @notice Sets userOwner
+     * @notice Sets userOwner – transfers ownership of assets.
      * @param _newOwner address
      */
-    function changeUserOwner(address _newOwner) external onlyOwner {
+    function changeUserOwner(address _newOwner) external onlyUserOwner {
         owner = _newOwner;
     }
 
@@ -176,7 +155,7 @@ contract Leverager is Ownable, MFDLogic {
     }
 
     /**
-     * @notice Sets fee ratio
+     * @notice Sets Looping fee ratio
      * @param _feePercent fee ratio.
      */
     function setFeePercent(uint256 _feePercent) external onlyOwner {
@@ -186,7 +165,7 @@ contract Leverager is Ownable, MFDLogic {
     }
 
     /**
-     * @notice Sets fee ratio
+     * @notice Sets new treasury address
      * @param _treasury address
      */
     function setTreasury(address _treasury) external onlyOwner {
@@ -194,6 +173,10 @@ contract Leverager is Ownable, MFDLogic {
         treasury = _treasury;
         emit TreasuryUpdated(_treasury);
     }
+
+    /*****************
+     * Looping Logic  *
+     ******************/
 
     /**
      * @dev Returns the configuration of the reserve
@@ -372,14 +355,80 @@ contract Leverager is Ownable, MFDLogic {
         return requiredVal;
     }
 
-    /*
-     * @notice Set default lock index
-     **/
+    /*****************
+     * Rewards Logic  *
+     ******************/
 
-    // relock
-    // individual early exit
-    // getReward
-    // withdraw
+    event RewardBaseTokensUpdated(address[] tokens);
+
+    /**
+     * @notice Array of reward tokens
+     * @param _tokens array of tokens to be used as base tokens for rewards
+     */
+    function addRewardBaseTokens(address[] memory _tokens) external onlyOwner {
+        rewardBaseTokens = _tokens;
+        emit RewardBaseTokensUpdated(_tokens);
+    }
+
+    /**
+     * @notice Claim rewards
+     * @dev Claim unlocked rewards, sell them for WETH and send portion of WETH to vault as interest.
+     */
+    function claim() external {
+        _claim();
+        uint256 amount = _rewardsToWETH();
+        uint256 fee = amount.mul(vault.interestFee).div(RATIO_DIVISOR);
+        amount = amount.sub(fee);
+        if (IERC20(WETH).allowance(address(vault)) = 0) {
+            IERC20(WETH).safeApprove(address(vault), type(uint256).max);
+        }
+        vault.sendRewards(fee);
+        IERC20(WETH).safetransfer(userOwner, amount);
+    }
+
+    /**
+     * @notice Claim rewards
+     * @dev Sell all rewards to WETH on Uniswap
+     */
+    function _rewardsToWETH() internal returns (uint256) {
+        uint256 ethAmount = 0;
+        for (uint256 i = 0; i < rewardBaseTokens.length; i += 1) {
+            address token = rewardBaseTokens[i];
+            uint256 amount = IERC20(token).balanceOf(address(this));
+            if (token == WETH) {
+                ethAmount = ethAmount.add(amount);
+            } else {
+                uint256 ethAmountOut = _estimateETHTokensOut(token, amount);
+                ethAmount = ethAmount.add(ethAmountOut);
+                IERC20(token).safeApprove(address(uniswapRouter), amount);
+                uniswapRouter.swapExactTokensForTokens(
+                    amount,
+                    _estimateETHTokensOut(token, amount).mul(99).div(100), // 1% slippage
+                    [token, WETH],
+                    address(this),
+                    block.timestamp + 600
+                );
+            }
+        }
+        return ethAmount;
+    }
+
+    function _estimateETHTokensOut(
+        address _in,
+        uint256 _amtIn
+    ) internal view returns (uint256 tokensOut) {
+        if (rdnt == _in) {
+            uint256 priceInAsset = chainlink.getPrice(rdnt); // 8 decimals
+        } else {
+            uint256 priceInAsset = aaveOracle.getAssetPrice(_in); //USDC: 100000000
+        }
+
+        uint256 priceOutAsset = aaveOracle.getAssetPrice(WETH); //WETH: 153359950000
+        uint256 decimalsIn = IERC20(_in).decimals();
+        tokensOut =
+            (_amtIn * priceInAsset * (10 ** 18)) /
+            (priceOutAsset * (10 ** decimalsIn));
+    }
 
     /*
      * @notice Exit DLP Position, take penalty and repay loan. Autoclaims rewards.
@@ -396,15 +445,38 @@ contract Leverager is Ownable, MFDLogic {
         );
     }
 
-    /*
-     * @notice Return DLP price scaled by RATIO_DIVISOR (1e4)
+    /*****************
+     * Lending Logic  *
+     ******************/
+
+    /// @notice Loop collateral factor – 80%
+    uint256 public LoopCollateralFactor = 8000;
+
+    /// @notice Amount of DLP borrowed
+    uint256 public DLPBorrowed;
+
+    /// @notice Chainlink oracle address
+    AggregatorV3Interface public chainlink;
+
+    /// @notice User liquidation
+    event userLiquidated(
+        address indexed user,
+        address indexed liquidator,
+        uint256 amount
+    );
+
+    /**
+     * @notice Return DLP (80-20 LP) price in ETH scaled by RATIO_DIVISOR (1e4)
      **/
     function DLPPrice() public view returns (uint256) {
-        // Calculate price of 80-20 Balancer LP scaled by 1e6
-        return 1e6 * 80 + (chainlink.getPrice(rdnt) * 20) / 100;
+        // RDNT Price (USD, 8 decimals) * ETH Price (USD, 8 decimals)/1e12 = RDNT Price (ETH, 4 decimals)
+        uint256 radiantEthPrice = (chainlink.getPrice(rdnt) *
+            aaveOracle.getAssetPrice(WETH)) / 1e12;
+        // Transform by 80:20 ratio
+        return (1e4 * 20 + radiantEthPrice * 80) / 10;
     }
 
-    /*
+    /**
      * @notice If there's DLP from someone calling withdrawExpiredLocksFor
      * Call function on tend rewards
      **/
@@ -414,7 +486,7 @@ contract Leverager is Ownable, MFDLogic {
         DLPBorrowed -= repayAmt;
     }
 
-    /*
+    /**
      * @notice Get the Health factor of the user
      * @param count loop count
      **/
@@ -423,9 +495,9 @@ contract Leverager is Ownable, MFDLogic {
             uint256 totalCollateralETH,
             uint256 totalDebtETH,
             uint256 availableBorrowsETH,
-            uint256 currentLiquidationThreshold,
-            uint256 ltv,
-            uint256 healthFactor
+            ,
+            ,
+
         ) = lendingPool.getUserAccountData(address(this));
         uint256 accountLiquidity = totalCollateralETH
             .sub(totalDebtETH)
@@ -439,7 +511,7 @@ contract Leverager is Ownable, MFDLogic {
         return hf;
     }
 
-    /*
+    /**
      *   @notice Liquidate the user DLP if they are under the threshold
      **/
     function liquidate() public returns (uint256) {
@@ -447,5 +519,6 @@ contract Leverager is Ownable, MFDLogic {
         DLP.transferFrom(address(this), msg.sender, DLPBorrowed);
         // Allow liquidator the entire amount – alternatively could auto unloop user
         userOwner = msg.sender;
+        emit userLiquidated(address(this), msg.sender, DLPBorrowed);
     }
 }
