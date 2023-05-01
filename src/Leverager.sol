@@ -2,12 +2,12 @@
 pragma solidity 0.8.12;
 pragma abicoder v2;
 
-import "openzeppelin-contracts/contracts/utils/math/SafeMath.sol";
-import "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
-import "openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
-import "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
-import "openzeppelin-contracts-upgradeable/contracts//security/PausableUpgradeable.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/upgradeable/contracts/proxy/utils/Initializable.sol";
+import "@openzeppelin/upgradeable/contracts/access/OwnableUpgradeable.sol";
+import "@openzeppelin/upgradeable/contracts//security/PausableUpgradeable.sol";
 
 import "./interfaces/radiant-interfaces/uniswap/IUniswapV2Router01.sol";
 import "./interfaces/radiant-interfaces/ILendingPool.sol";
@@ -378,7 +378,7 @@ contract Leverager is
         uint256 _amtIn
     ) internal view returns (uint256 tokensOut) {
         if (rdnt == _in) {
-            uint256 priceInAsset = chainlink.getPrice(rdnt); // 8 decimals
+            uint256 priceInAsset = chainlink.getPrice(); // 8 decimals
         } else {
             uint256 priceInAsset = aaveOracle.getAssetPrice(_in); //USDC: 100000000
         }

@@ -1,6 +1,7 @@
+// SPDX-License-Identifier: MIT
 import {ERC4626} from "solmate/mixins/ERC4626.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
-import "openzeppelin-contracts/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "./LeveragerFactory.sol";
 
 pragma solidity 0.8.12;
