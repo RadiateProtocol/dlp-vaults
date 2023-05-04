@@ -484,8 +484,9 @@ contract Leverager is
      **/
     function liquidate() public returns (uint256) {
         require(healthFactor() > MINHEALTHFACTOR, "CANNOT LIQUIDATE");
-        DLP.transferFrom(address(this), msg.sender, DLPBorrowed);
+        repayLoan(DLPBorrowed);
         vault.owner.transferLeverager(userOwner, msg.sender);
+
         // Allow liquidator the entire amount – alternatively could auto unloop user
         emit userLiquidated(userOwner, msg.sender, DLPBorrowed);
         userOwner = msg.sender;
