@@ -2,12 +2,10 @@
 pragma solidity 0.8.12;
 pragma abicoder v2;
 
+import "@solmate/mixins/ERC4626.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/upgradeable/contracts/proxy/utils/Initializable.sol";
-import "@openzeppelin/upgradeable/contracts/access/OwnableUpgradeable.sol";
-import "@openzeppelin/upgradeable/contracts//security/PausableUpgradeable.sol";
 
 import "./interfaces/radiant-interfaces/uniswap/IUniswapV2Router01.sol";
 import "./interfaces/radiant-interfaces/ILendingPool.sol";
@@ -22,12 +20,7 @@ import "./DLPVault.sol";
 /// @title Leverager Contract
 /// @author w
 /// @dev All function calls are currently implemented without side effects
-contract Leverager is
-    MFDLogic,
-    Initializable,
-    PausableUpgradeable,
-    OwnableUpgradeable
-{
+contract Leverager is MFDLogic, ERC4626 {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -44,17 +37,25 @@ contract Leverager is
     /// @notice rdnt token address
     address public constant rdnt = 0x3082CC23568eA640225c2467653dB90e9250AaA0;
 
+    // Leverager parameters
     /// @notice Lending Pool address
-    ILendingPool public lendingPool;
+    ILendingPool public lendingPool =
+        0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1;
 
     /// @notice Sushiswap router address
-    IUniswapV2Router01 public uniswapRouter;
+    IUniswapV2Router01 public uniswapRouter =
+        0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506;
 
     /// @notice EligibilityDataProvider contract address
-    IEligibilityDataProvider public eligibilityDataProvider;
+    IEligibilityDataProvider public eligibilityDataProvider =
+        0xd4966DC49a10aa5467D65f4fA4b1449b5d874399;
 
     /// @notice ChefIncentivesController contract address
-    IChefIncentivesController public cic;
+    IChefIncentivesController public cic =
+        0xFf785dE8a851048a65CbE92C84d4167eF3Ce9BAC;
+
+    /// @notice MinAmount to invest
+    uint256 public immutable minAmountToInvest;
 
     /// @notice DLPVault address
     DLPVault public vault;
@@ -62,83 +63,98 @@ contract Leverager is
     /// @notice Aave oracle address
     IAaveOracle public aaveOracle;
 
-    /**
-     * @notice Constructor
-     * @param _lendingPool Lending Pool address.
-     * @param _uniswapRouter Uniswap router address.
-     * @param _rewardEligibleDataProvider EligibilityProvider address.
-     * @param _aaveOracle address.
-     * @param _cic ChefIncentivesController address.
-     * @param _chainlink aggregatorV3 address.
-     * @param _mfd MultiFeeDistribution address.
-     * @param _vault DLP Vault address.
-     * @param _userOwner Address of the user owner.
-     */
-    function initialize(
-        ILendingPool _lendingPool,
-        IUniswapV2Router01 _uniswapRouter,
-        IEligibilityDataProvider _rewardEligibleDataProvider,
-        IAaveOracle _aaveOracle,
-        IChefIncentivesController _cic,
-        AggregatorV3Interface _chainlink,
-        IMultiFeeDistribution _mfd,
+    /// @notice Owner Address
+    address public owner;
+
+    constructor(
+        address _owner,
+        uint256 _minAmountToInvest,
+        uint256 _vaultCap,
+        uint256 _loopCount,
+        uint256n _borrowRatio,
         DLPVault _vault,
-        address _userOwner
-    ) public MFDLogic(_mfd) initializer {
-        require(address(_lendingPool) != (address(0)), "Not a valid address");
-        require(address(_uniswapRouter) != (address(0)), "Not a valid address");
+        ERC20 _asset,
+        string memory _name,
+        string memory _symbol
+    ) ERC4626(_asset, _name, _symbol) {
         require(
-            address(_rewardEligibleDataProvider) != (address(0)),
-            "Not a valid address"
+            _minAmountToInvest > 0,
+            "Leverager: minAmountToInvest must be greater than 0"
         );
-        require(address(_aaveOracle) != (address(0)), "Not a valid address");
-        require(address(_cic) != (address(0)), "Not a valid address");
-        require(address(_vault) != (address(0)), "Not a valid address");
-        require(_treasury != address(0), "Not a valid address");
-        require(_userOwner != address(0), "Not a valid address");
-        lendingPool = _lendingPool;
-        uniswapRouter = _uniswapRouter;
-        eligibilityDataProvider = _rewardEligibleDataProvider;
-        aaveOracle = _aaveOracle;
-        cic = _cic;
+        owner = _owner;
+        minAmountToInvest = _minAmountToInvest;
+        vaultCap = _vaultCap;
+        loopCount = _loopCount;
+        borrowRatio = _borrowRatio;
         vault = _vault;
-        userOwner = _userOwner;
-        __Ownable_init();
-        __Pausable_init();
     }
 
     /******************
      * Admin Logic    *
      ******************/
 
-    /// @notice Treasury address
-    address public treasury;
+    /// @notice vault cap
+    uint256 public vaultCap;
 
-    /// @notice userOwner
-    address public userOwner;
+    /// @notice Loop count
+    uint256 public loopCount;
 
-    /**
-     * @notice Require UserOwner
-     */
-    modifier onlyUserOwner() {
-        require(msg.sender == userOwner, "Not user owner");
+    /// @notice Borrow ratio
+    uint256 public borrowRatio;
+
+    /// @notice DLP Health Factor – default for Leverager is 6%
+    uint256 public healthFactor = (RATIO_DIVISOR * 1.06) / RATIO_DIVISOR;
+
+    /// @notice deposit fee
+    uint256 public depositFee;
+
+    /// @notice Ownable modifier
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Leverager: Only owner");
         _;
     }
 
-    /**
-     * @notice Sets userOwner – transfers ownership of assets.
-     * @param _newOwner address
-     */
-    function changeUserOwner(address _newOwner) external onlyUserOwner {
-        owner.transferLeverager(userOwner, msg.sender);
-        userOwner = _newOwner;
+    /// @notice Set the owner
+    /// @param _owner The new owner
+    function setOwner(address _owner) external onlyOwner {
+        owner = _owner;
+    }
+
+    function changeVaultCap(uint256 _vaultCap) external onlyOwner {
+        // Scaled by asset.decimals
+        vaultCap = _vaultCap;
+    }
+
+    /// @dev Change loop count for any new deposits
+    function changeLoopCount(uint256 _loopCount) external onlyOwner {
+        loopCount = _loopCount;
+    }
+
+    /// @dev Change borrow ratio for any new deposits
+    function changeBorrowRatio(uint256 _borrowRatio) external onlyOwner {
+        borrowRatio = _borrowRatio;
+    }
+
+    /// @dev Change DLP health factor
+    function changeDLPHealthFactor(uint256 _healthfactor) external onlyOwner {
+        healthFactor = _healthfactor;
+    }
+
+    /// @dev Set default lock index
+    function setDefaultLockIndex(uint256 _defaultLockIndex) external onlyOwner {
+        mfd.setDefaultLockReleaseIndex(_defaultLockIndex);
+    }
+
+    /// @dev Set deposit fee
+    function setDepositFee(uint256 _depositFee) external onlyOwner {
+        mfd.setDepositFee(_depositFee);
     }
 
     /**
      * @dev Revert fallback calls
      */
     fallback() external payable {
-        revert("Fallback not allowed");
+        revert("Leverager: Fallback not allowed");
     }
 
     /*****************
@@ -181,77 +197,43 @@ contract Leverager is
 
     /**
      * @dev Loop the deposit and borrow of an asset (removed eth loop, deposit WETH directly)
-     * @param asset for loop
-     * @param amount for the initial deposit
-     * @param interestRateMode stable or variable borrow mode
-     * @param borrowRatio Ratio of tokens to borrow
-     * @param loopCount Repeat count for loop
-     * @param isBorrow true when the loop without deposit tokens
      **/
-    function loop(
-        address asset,
-        uint256 amount,
-        uint256 interestRateMode,
-        uint256 borrowRatio,
-        uint256 loopCount,
-        uint256 lockIndex,
-        bool isBorrow
-    ) external onlyUserOwner {
+    function _loop() internal {
         require(borrowRatio <= RATIO_DIVISOR, "Invalid ratio");
         uint16 referralCode = 0;
-        address treasury = owner.treasury();
-        uint256 feePercent = owner.feePercent();
-        uint256 fee;
-        if (!isBorrow) {
-            IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
-            fee = amount.mul(feePercent).div(RATIO_DIVISOR);
-            IERC20(asset).safeTransfer(treasury, fee);
-            amount = amount.sub(fee);
+        uint256 amount = asset.balanceOf(address(this));
+        uint256 interestRateMode = 2; // variable
+        if (asset.allowance(address(this), address(lendingPool)) == 0) {
+            asset.safeApprove(address(lendingPool), type(uint256).max);
         }
-        if (IERC20(asset).allowance(address(this), address(lendingPool)) == 0) {
-            IERC20(asset).safeApprove(address(lendingPool), type(uint256).max);
+        if (asset.allowance(address(this), address(treasury)) == 0) {
+            asset.safeApprove(treasury, type(uint256).max);
         }
-        if (IERC20(asset).allowance(address(this), address(treasury)) == 0) {
-            IERC20(asset).safeApprove(treasury, type(uint256).max);
-        }
-
-        if (!isBorrow) {
-            lendingPool.deposit(asset, amount, msg.sender, referralCode);
-        }
-
-        // cic.setEligibilityExempt(msg.sender, true);
-
         for (uint256 i = 0; i < loopCount; i += 1) {
-            amount = amount.mul(borrowRatio).div(RATIO_DIVISOR);
+            amount = (amount * borrowRatio) / RATIO_DIVISOR;
             lendingPool.borrow(
-                asset,
+                address(asset),
                 amount,
                 interestRateMode,
                 referralCode,
                 address(this)
             );
 
-            fee = amount.mul(feePercent).div(RATIO_DIVISOR);
-            IERC20(asset).safeTransfer(treasury, fee);
             lendingPool.deposit(
-                asset,
-                amount.sub(fee),
+                address(asset),
+                amount,
                 address(this),
                 referralCode
             );
         }
-        // todo: ??
-        // cic.setEligibilityExempt(msg.sender, false);
         uint256 requiredAmount = DLPToZapEstimation(
-            address(this),
-            asset,
             amount,
             borrowRatio,
             loopCount
         );
 
-        uint256 dlpBorrowed = vault.borrow(requiredAmount, msg.sender);
-        if (dlpBorrowed < requiredAmount) revert("Not enough borrow");
+        uint256 _dlpBorrowed = vault.borrow(requiredAmount);
+        if (_dlpBorrowed < requiredAmount) revert("Not enough borrow");
         if (
             IERC20(vault.DLPAddress).allowance(
                 address(this),
@@ -263,65 +245,84 @@ contract Leverager is
                 type(uint256).max
             );
         }
-        _stake(dlpBorrowed, lockIndex);
+        uint256 duration = mfd.defaultLockIndex(address(this));
+        mfd.stake(_dlpBorrowed, address(this), duration);
+        DLPBorrowed += _dlpBorrowed;
     }
 
     /**
-     * @notice Return estimated zap DLP amount for eligbility after loop.
-     * @param user for zap
-     * @param asset src token
+     * @notice Return estimated zap DLP amount for eligbility after loop – denominated in DLP.
      * @param amount of `asset`
      * @param borrowRatio Single ratio of borrow
      * @param loopCount Repeat count for loop
      **/
     function DLPToZapEstimation(
-        address user,
-        address asset,
         uint256 amount,
         uint256 borrowRatio,
         uint256 loopCount
     ) external view returns (uint256) {
-        if (asset == API_ETH_MOCK_ADDRESS) {
-            asset = address(weth);
-        }
-        uint256 required = eligibilityDataProvider.requiredUsdValue(user);
-        uint256 locked = eligibilityDataProvider.lockedUsdValue(user);
+        uint256 required = eligibilityDataProvider.requiredUsdValue(
+            address(this)
+        );
+        uint256 locked = eligibilityDataProvider.lockedUsdValue(address(this));
 
-        uint256 fee = amount.mul(feePercent).div(RATIO_DIVISOR);
-        amount = amount.sub(fee);
-
-        required = required.add(requiredLocked(asset, amount));
+        // Add health factor amount to required
+        required =
+            ((required + requiredLocked(asset, amount)) * healthFactor) /
+            RATIO_DIVISOR;
 
         for (uint256 i = 0; i < loopCount; i += 1) {
-            amount = amount.mul(borrowRatio).div(RATIO_DIVISOR);
-            fee = amount.mul(feePercent).div(RATIO_DIVISOR);
-            required = required.add(requiredLocked(asset, amount.sub(fee)));
+            amount = (amount * borrowRatio) / RATIO_DIVISOR;
+            required += requiredLocked(asset, amount);
         }
 
         if (locked >= required) {
             return 0;
         } else {
-            return required.sub(locked);
+            // Transform USD to DLP price
+            uint256 deltaUsdValue = required - locked; //decimals === 8
+            uint256 wethPrice = aaveOracle.getAssetPrice(address(weth));
+            uint8 priceDecimal = IChainlinkAggregator(
+                aaveOracle.getSourceOfAsset(address(weth))
+            ).decimals();
+            uint256 deltaDLPvalue = (deltaUsdValue *
+                ((DLPPrice() * wethPrice) / 10 ** priceDecimal)) *
+                10 ** (18 - 2 * priceDecimal);
+            // 10e8 + 10e8 + 10e8 - 10e8 + 10e2 = 10e18
+            return deltaDLPvalue;
         }
     }
 
     /**
-     * @notice Returns required LP lock amount.
-     * @param asset underlying asset
-     * @param amount of tokens
+     * @notice Returns required LP lock amount denominated in USD
+     * @param _asset underlying asset
+     * @param _amount of tokens
      **/
     function requiredLocked(
-        address asset,
-        uint256 amount
+        address _asset,
+        uint256 _amount
     ) internal view returns (uint256) {
-        uint256 assetPrice = aaveOracle.getAssetPrice(asset);
-        uint8 assetDecimal = IERC20Metadata(asset).decimals();
-        uint256 requiredVal = assetPrice
-            .mul(amount)
-            .div(10 ** assetDecimal)
-            .mul(eligibilityDataProvider.requiredDepositRatio())
-            .div(eligibilityDataProvider.RATIO_DIVISOR());
+        uint256 assetPrice = aaveOracle.getAssetPrice(_asset);
+        uint8 assetDecimal = IERC20Metadata(_asset).decimals();
+        uint256 requiredVal = (((assetPrice * _amount) / (10 ** assetDecimal)) *
+            eligibilityDataProvider.requiredDepositRatio()) /
+            eligibilityDataProvider.RATIO_DIVISOR();
+
         return requiredVal;
+    }
+
+    /**
+     *
+     * @param _amount of tokens to free from loop
+     */
+    function _unloop(uint256 _amount) internal {
+        uniswapRouter.swapExactTokensForTokens(
+            amount,
+            0,
+            [token, address(asset)],
+            address(this),
+            block.timestamp + 600
+        );
     }
 
     /*****************
@@ -332,48 +333,48 @@ contract Leverager is
      * @notice Claim rewards
      * @dev Claim unlocked rewards, sell them for WETH and send portion of WETH to vault as interest.
      */
-    function claim() external {
-        _claim();
+    function claim() public {
+        mfd.claimRewards();
         repayLoan(0); // Repay DLP with any unlocked DLP
-        uint256 amount = _rewardsToWETH();
-        uint256 fee = amount.mul(vault.interestFee).div(RATIO_DIVISOR);
-        amount = amount.sub(fee);
-        if (IERC20(WETH).allowance(address(vault)) = 0) {
-            IERC20(WETH).safeApprove(address(vault), type(uint256).max);
+        uint256 amount = _rewardsToAsset();
+        uint256 fee = (amount * vault.interestFee) / RATIO_DIVISOR;
+        amount = amount - fee;
+        if (asset.allowance(address(vault)) = 0) {
+            asset.safeApprove(address(vault), type(uint256).max);
         }
         vault.sendRewards(fee);
-        IERC20(WETH).safetransfer(userOwner, amount);
     }
 
     /**
      * @notice Claim rewards
-     * @dev Sell all rewards to WETH on Uniswap
+     * @dev Sell all rewards to base asset on Sushiswap via swaprouter
      */
-    function _rewardsToWETH() internal returns (uint256) {
+    function _rewardsToAsset() internal returns (uint256) {
         address[] memory rewardBaseTokens = rewardPool.getRewardBaseTokens();
-        uint256 ethAmount = 0;
+        uint256 assetAmount = 0;
         for (uint256 i = 0; i < rewardBaseTokens.length; i += 1) {
             address token = rewardBaseTokens[i];
             uint256 amount = IERC20(token).balanceOf(address(this));
-            if (token == WETH) {
-                ethAmount = ethAmount.add(amount);
+            if (token == address(asset)) {
+                assetAmount += amount;
             } else {
-                uint256 ethAmountOut = _estimateETHTokensOut(token, amount);
-                ethAmount = ethAmount.add(ethAmountOut);
+                uint256 assetAmountOut = _estimateAssetTokensOut(token, amount);
+                assetAmount += assetAmountOut;
                 IERC20(token).safeApprove(address(uniswapRouter), amount);
                 uniswapRouter.swapExactTokensForTokens(
                     amount,
-                    _estimateETHTokensOut(token, amount).mul(99).div(100), // 1% slippage
-                    [token, WETH],
+                    (_estimateAssetTokensOut(token, amount) * 99) / 100, // 1% slippage
+                    [token, address(asset)],
                     address(this),
                     block.timestamp + 600
                 );
             }
         }
-        return ethAmount;
+        return assetAmount;
     }
 
-    function _estimateETHTokensOut(
+    /// @dev Return estimated amount of Asset tokens to receive for given amount of tokens
+    function _estimateAssetTokensOut(
         address _in,
         uint256 _amtIn
     ) internal view returns (uint256 tokensOut) {
@@ -383,57 +384,48 @@ contract Leverager is
             uint256 priceInAsset = aaveOracle.getAssetPrice(_in); //USDC: 100000000
         }
 
-        uint256 priceOutAsset = aaveOracle.getAssetPrice(WETH); //WETH: 153359950000
+        uint256 priceOutAsset = aaveOracle.getAssetPrice(address(asset)); //WETH: 153359950000
         uint256 decimalsIn = IERC20(_in).decimals();
         tokensOut =
-            (_amtIn * priceInAsset * (10 ** 18)) /
+            (_amtIn * priceInAsset * (10 ** asset.decimals())) /
             (priceOutAsset * (10 ** decimalsIn));
     }
 
-    /*
-     * @notice Exit DLP Position, take penalty and repay loan. Autoclaims rewards.
-     **/
-    function exit() public onlyUserOwner {
-        _exit();
-        uint256 repayAmt = IERC20(vault.DLPAddress).balanceOf(address(this));
-        vault.repayBorrow(repayAmt);
-        DLPBorrowed -= repayAmt;
-        // If user withdraws collateral and exits in same tx, could lead to shortfall
-        require(
-            healthFactor() <= MINHEALTHFACTOR,
-            "Exit: Health factor too low"
-        );
-    }
+    // /*
+    //  * @notice Exit DLP Position, take penalty and repay loan. Autoclaims rewards.
+    //  **/
+    // function exit() public {
+    //     _exit();
+    //     uint256 repayAmt = IERC20(vault.DLPAddress).balanceOf(address(this));
+    //     vault.repayBorrow(repayAmt);
+    //     DLPBorrowed -= repayAmt;
+    //     // If user withdraws collateral and exits in same tx, could lead to shortfall
+    //     require(
+    //         healthFactor() <= MINHEALTHFACTOR,
+    //         "Exit: Health factor too low"
+    //     );
+    // }
 
     /*****************
      * Lending Logic  *
      ******************/
 
-    /// @notice Loop collateral factor – 80%
-    uint256 public LoopCollateralFactor = 8000;
-
     /// @notice Amount of DLP borrowed
     uint256 public DLPBorrowed;
 
     /// @notice Chainlink oracle address
-    AggregatorV3Interface public chainlink;
-
-    /// @notice User liquidation
-    event userLiquidated(
-        address indexed user,
-        address indexed liquidator,
-        uint256 amount
-    );
+    AggregatorV3Interface public chainlink =
+        0x20d0Fcab0ECFD078B036b6CAf1FaC69A6453b352;
 
     /**
-     * @notice Return DLP (80-20 LP) price in ETH scaled by RATIO_DIVISOR (1e4)
+     * @notice Return DLP (80-20 LP) price in ETH scaled by 1e8
      **/
     function DLPPrice() public view returns (uint256) {
-        // RDNT Price (USD, 8 decimals) * ETH Price (USD, 8 decimals)/1e12 = RDNT Price (ETH, 4 decimals)
+        // RDNT Price (USD, 8 decimals) * ETH Price (USD, 8 decimals)/1e12 = RDNT Price (ETH, 8 decimals)
         uint256 radiantEthPrice = (chainlink.getPrice(rdnt) *
-            aaveOracle.getAssetPrice(WETH)) / 1e12;
+            aaveOracle.getAssetPrice(WETH)) / 10e8;
         // Transform by 80:20 ratio
-        return (1e4 * 20 + radiantEthPrice * 80) / 10;
+        return (10e8 * 20 + radiantEthPrice * 80) / 100;
     }
 
     /**
@@ -454,11 +446,24 @@ contract Leverager is
         DLPBorrowed -= repayAmt;
     }
 
-    /**
-     * @notice Get the Health factor of the user
-     * @param count loop count
-     **/
-    function healthFactor() external view returns (uint256) {
+    /// @notice Top up DLP health factor to 1 + healthFactorBuffer
+    function topUp() public {
+        uint256 requiredAmount = DLPToZapEstimation(0, 0, 0);
+        if (requiredAmount > 0) {
+            uint256 _dlpBorrowed = vault.borrow(requiredAmount);
+            if (_dlpBorrowed < requiredAmount) revert("Not enough borrow");
+            uint256 duration = mfd.defaultLockIndex(address(this));
+            mfd.stake(_dlpBorrowed, address(this), duration);
+            DLPBorrowed += _dlpBorrowed;
+        }
+        emit borrow(DLPBorrowed);
+    }
+
+    /*****************
+     * 4626 Overrides  *
+     ******************/
+    function totalAssets() public view override returns (uint256) {
+        // Get account liquidity
         (
             uint256 totalCollateralETH,
             uint256 totalDebtETH,
@@ -467,28 +472,34 @@ contract Leverager is
             ,
 
         ) = lendingPool.getUserAccountData(address(this));
-        uint256 accountLiquidity = totalCollateralETH
-            .sub(totalDebtETH)
-            .mul(LoopCollateralFactor)
-            .div(RATIO_DIVISOR);
-        uint256 DLPBorrowedETH = DLPPrice().mul(DLPBorrowed).div(RATIO_DIVISOR);
-        uint256 hf = accountLiquidity.mul(RATIO_DIVISOR).div(DLPBorrowedETH);
-        // Return minimum recoverable amount = total collateral - debt * 0.80 = hf
-        // even if user gets liquidated, loses 15% of their collateral to liquidation penalty (15%)
-        // Still significant buffer for DLP liquidation since collateral factor is fixed at 80%
-        return hf;
+        uint256 accountLiquidityUnderlying = ((totalCollateralETH -
+            totalDebtETH) * aaveOracle.getAssetPrice(address(asset))) /
+            aaveOracle.getAssetPrice(WETH);
+
+        return asset.balanceOf(address(this)) + accountLiquidityUnderlying;
     }
 
-    /**
-     *   @notice Liquidate the user DLP if they are under the threshold
-     **/
-    function liquidate() public returns (uint256) {
-        require(healthFactor() > MINHEALTHFACTOR, "CANNOT LIQUIDATE");
-        repayLoan(DLPBorrowed);
-        vault.owner.transferLeverager(userOwner, msg.sender);
+    function beforeWithdraw(uint256 assets, uint256 shares) internal override {
+        _claim();
+        repayLoan();
+        if (assets <= asset.balanceOf(address(this))) {
+            return;
+        }
+        uint256 amountToWithdraw = assets - asset.balanceOf(address(this));
+    }
 
-        // Allow liquidator the entire amount – alternatively could auto unloop user
-        emit userLiquidated(userOwner, msg.sender, DLPBorrowed);
-        userOwner = msg.sender;
+    function afterDeposit(uint256 assets, uint256 shares) internal override {
+        _claim();
+        repayLoan();
+        if (assets + totalAssets() >= vaultCap)
+            revert("Leverager: Vault cap reached");
+        if (depositFee > 0) {
+            // Fee is necessary to prevent deposit and withdraw trolling
+            uint256 fee = (assets * depositFee) / RATIO_DIVISOR;
+            asset.transfer(treasury, fee);
+        }
+        if (asset.balanceOf(address(this)) >= minAmountToInvest) {
+            _loop();
+        }
     }
 }
