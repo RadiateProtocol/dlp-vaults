@@ -16,25 +16,21 @@ contract MFDlogic {
     }
 
     function _stake(uint256 _dlpBorrowed, uint256 _lockIndex) internal {
-        mfd.setDefaultRelockTypeIndex(lockIndex);
-        mfd.stake(dlpBorrowed, address(this), lockIndex);
+        mfd.setDefaultRelockTypeIndex(_lockIndex);
+        mfd.stake(_dlpBorrowed, address(this), _lockIndex);
     }
 
     function _exit() internal {
-        mfd.exit(True);
+        mfd.exit(true);
     }
 
     // No withdraw logic – either exit or get liquidated.
 
-    function _relock() internal {
-        mfd.relock();
-    }
-
-    function _setRelock() internal {
-        mfd.relock();
+    function _setDefaultRelock(uint256 _index) internal {
+        mfd.setDefaultRelockTypeIndex(_index);
     }
 
     function _claim() internal {
-        mfd.getReward();
+        mfd.getAllRewards();
     }
 }
