@@ -15,6 +15,10 @@ contract MFDlogic {
         mfd = _mfd;
     }
 
+    function _relock() internal {
+        mfd.relock();
+    }
+
     function _stake(uint256 _dlpBorrowed, uint256 _lockIndex) internal {
         mfd.setDefaultRelockTypeIndex(_lockIndex);
         mfd.stake(_dlpBorrowed, address(this), _lockIndex);
