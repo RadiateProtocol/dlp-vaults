@@ -15,12 +15,17 @@ import "./interfaces/radiant-interfaces/IChefIncentivesController.sol";
 import "./interfaces/radiant-interfaces/IMultiFeeDistribution.sol";
 import "./interfaces/radiant-interfaces/IAaveOracle.sol";
 import "./interfaces/radiant-interfaces/AggregatorV3Interface.sol";
+import "./interfaces/radiant-interfaces/balancer/IFlashLoanRecipient.sol";
+import "./interfaces/radiant-interfaces/balancer/IVault.sol";
+import "@aave/protocol-v3/contracts/interfaces/IFlashLoanReceiver.sol";
+import "@aave/protocol-v3/contracts/interfaces/ILendingPool.sol";
+import "@aave/protocol-v3/contracts/interfaces/ILendingPoolAddressesProvider.sol";
 import "./DLPVault.sol";
 
 /// @title Leverager Contract
 /// @author w
 /// @dev All function calls are currently implemented without side effects
-contract Leverager is MFDLogic, ERC4626 {
+contract Leverager is ERC4626 {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -37,6 +42,11 @@ contract Leverager is MFDLogic, ERC4626 {
     /// @notice rdnt token address
     address public constant rdnt = 0x3082CC23568eA640225c2467653dB90e9250AaA0;
 
+    // ILendingPool public constant aaveLendingPool = 0x794a61358D6845594F94dc1DB02A252b5b4814aD;
+    /// @notice Aave Lending Pool address
+    ILendingPoolAddressesProvider
+        public constant LENDING_POOL_ADDRESSES_PROVIDER =
+        0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb;
     // Leverager parameters
     /// @notice Lending Pool address
     ILendingPool public lendingPool =
@@ -53,6 +63,10 @@ contract Leverager is MFDLogic, ERC4626 {
     /// @notice ChefIncentivesController contract address
     IChefIncentivesController public cic =
         0xFf785dE8a851048a65CbE92C84d4167eF3Ce9BAC;
+
+    /// @notice Balancer Vault Address
+    IVault public constant balancerVault =
+        0xBA12222222228d8Ba445958a75a0704d566BF2C8;
 
     /// @notice MinAmount to invest
     uint256 public immutable minAmountToInvest;
@@ -316,13 +330,13 @@ contract Leverager is MFDLogic, ERC4626 {
      * @param _amount of tokens to free from loop
      */
     function _unloop(uint256 _amount) internal {
-        uniswapRouter.swapExactTokensForTokens(
-            amount,
-            0,
-            [token, address(asset)],
-            address(this),
-            block.timestamp + 600
-        );
+        asset.approve(address(aaveLendingPool), type(uint256).max);
+        aaveLendingPool.flashLoanSimple(address(this), assets, amounts);
+        asset.approve(address(aaveLendingPool), 0); // Remove approval for safety
+    }
+
+    function executeOperation(uint256 _amount, uint256 _wethAmount) external {
+        lendingPool.repay(address(asset), _amount, 2, address(this));
     }
 
     /*****************
@@ -358,7 +372,11 @@ contract Leverager is MFDLogic, ERC4626 {
             if (token == address(asset)) {
                 assetAmount += amount;
             } else {
-                uint256 assetAmountOut = _estimateAssetTokensOut(token, amount);
+                uint256 assetAmountOut = _estimateAssetTokensOut(
+                    token,
+                    address(asset),
+                    amount
+                );
                 assetAmount += assetAmountOut;
                 IERC20(token).safeApprove(address(uniswapRouter), amount);
                 uniswapRouter.swapExactTokensForTokens(
@@ -376,6 +394,7 @@ contract Leverager is MFDLogic, ERC4626 {
     /// @dev Return estimated amount of Asset tokens to receive for given amount of tokens
     function _estimateAssetTokensOut(
         address _in,
+        address _out,
         uint256 _amtIn
     ) internal view returns (uint256 tokensOut) {
         if (rdnt == _in) {
@@ -384,10 +403,11 @@ contract Leverager is MFDLogic, ERC4626 {
             uint256 priceInAsset = aaveOracle.getAssetPrice(_in); //USDC: 100000000
         }
 
-        uint256 priceOutAsset = aaveOracle.getAssetPrice(address(asset)); //WETH: 153359950000
+        uint256 priceOutAsset = aaveOracle.getAssetPrice(_out); //WETH: 153359950000
         uint256 decimalsIn = IERC20(_in).decimals();
+        uint256 decimalsOut = IERC20(_out).decimals();
         tokensOut =
-            (_amtIn * priceInAsset * (10 ** asset.decimals())) /
+            (_amtIn * priceInAsset * (10 ** decimalsOut)) /
             (priceOutAsset * (10 ** decimalsIn));
     }
 
