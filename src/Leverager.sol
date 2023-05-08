@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import "./interfaces/radiant-interfaces/uniswap/IUniswapV2Router01.sol";
+import "./interfaces/uniswap/IUniswapV2Router01.sol";
 import "./interfaces/radiant-interfaces/ILendingPool.sol";
 import "./interfaces/radiant-interfaces/IEligibilityDataProvider.sol";
 import "./interfaces/radiant-interfaces/IChainlinkAggregator.sol";
@@ -15,17 +15,14 @@ import "./interfaces/radiant-interfaces/IChefIncentivesController.sol";
 import "./interfaces/radiant-interfaces/IMultiFeeDistribution.sol";
 import "./interfaces/radiant-interfaces/IAaveOracle.sol";
 import "./interfaces/radiant-interfaces/AggregatorV3Interface.sol";
-import "./interfaces/radiant-interfaces/balancer/IFlashLoanRecipient.sol";
-import "./interfaces/radiant-interfaces/balancer/IVault.sol";
-import "@aave/protocol-v3/contracts/interfaces/IFlashLoanReceiver.sol";
-import "@aave/protocol-v3/contracts/interfaces/ILendingPool.sol";
-import "@aave/protocol-v3/contracts/interfaces/ILendingPoolAddressesProvider.sol";
+import "./interfaces/aave/IFlashLoanSimpleReceiver.sol";
+import "./interfaces/aave/IPool.sol";
 import "./DLPVault.sol";
 
 /// @title Leverager Contract
 /// @author w
 /// @dev All function calls are currently implemented without side effects
-contract Leverager is ERC4626 {
+contract Leverager is ERC4626, IFlashLoanSimpleReceiver {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -42,11 +39,10 @@ contract Leverager is ERC4626 {
     /// @notice rdnt token address
     address public constant rdnt = 0x3082CC23568eA640225c2467653dB90e9250AaA0;
 
-    // ILendingPool public constant aaveLendingPool = 0x794a61358D6845594F94dc1DB02A252b5b4814aD;
-    /// @notice Aave Lending Pool address
-    ILendingPoolAddressesProvider
-        public constant LENDING_POOL_ADDRESSES_PROVIDER =
-        0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb;
+    /// @notice Aave lending pool address (for flashloans)
+    IPool public constant aaveLendingPool =
+        0x794a61358D6845594F94dc1DB02A252b5b4814aD;
+
     // Leverager parameters
     /// @notice Lending Pool address
     ILendingPool public lendingPool =
@@ -63,10 +59,6 @@ contract Leverager is ERC4626 {
     /// @notice ChefIncentivesController contract address
     IChefIncentivesController public cic =
         0xFf785dE8a851048a65CbE92C84d4167eF3Ce9BAC;
-
-    /// @notice Balancer Vault Address
-    IVault public constant balancerVault =
-        0xBA12222222228d8Ba445958a75a0704d566BF2C8;
 
     /// @notice MinAmount to invest
     uint256 public immutable minAmountToInvest;
@@ -85,7 +77,7 @@ contract Leverager is ERC4626 {
         uint256 _minAmountToInvest,
         uint256 _vaultCap,
         uint256 _loopCount,
-        uint256n _borrowRatio,
+        uint256 _borrowRatio,
         DLPVault _vault,
         ERC20 _asset,
         string memory _name,
@@ -162,6 +154,17 @@ contract Leverager is ERC4626 {
     /// @dev Set deposit fee
     function setDepositFee(uint256 _depositFee) external onlyOwner {
         mfd.setDepositFee(_depositFee);
+    }
+
+    /**
+     * @notice Exit DLP Position, take penalty and repay DLP loan. Autoclaims rewards.
+     **/
+    function exit() public onlyOwner {
+        mfd.exit();
+        uint256 repayAmt = IERC20(vault.DLPAddress).balanceOf(address(this));
+        vault.repayBorrow(repayAmt);
+        DLPBorrowed -= repayAmt;
+        /// @notice Exit can cause disqualification from rewards and penalty
     }
 
     /**
@@ -330,13 +333,37 @@ contract Leverager is ERC4626 {
      * @param _amount of tokens to free from loop
      */
     function _unloop(uint256 _amount) internal {
-        asset.approve(address(aaveLendingPool), type(uint256).max);
-        aaveLendingPool.flashLoanSimple(address(this), assets, amounts);
-        asset.approve(address(aaveLendingPool), 0); // Remove approval for safety
+        aaveLendingPool.flashLoanSimple(
+            address(this),
+            address(ERC20),
+            _amount,
+            [],
+            0
+        );
     }
 
-    function executeOperation(uint256 _amount, uint256 _wethAmount) external {
-        lendingPool.repay(address(asset), _amount, 2, address(this));
+    function executeOperation(
+        address asset,
+        uint256 amount,
+        uint256 premium,
+        address initiator,
+        bytes calldata params
+    ) external returns (bool) {
+        require(
+            msg.sender == address(aaveLendingPool),
+            "Leverager: only aave lending pool"
+        );
+        require(
+            initiator == address(this),
+            "Leverager: only this contract can initiate"
+        );
+        if (asset.allowance(address(this), address(lendingPool)) == 0) {
+            asset.safeApprove(address(lendingPool), type(uint256).max);
+            // ok since initiator and sender are checked
+        }
+
+        lendingPool.repay(asset, amount, 2, address(this));
+        lendingPool.withdraw(asset, amount, address(this));
     }
 
     /*****************
@@ -349,10 +376,8 @@ contract Leverager is ERC4626 {
      */
     function claim() public {
         mfd.claimRewards();
-        repayLoan(0); // Repay DLP with any unlocked DLP
-        uint256 amount = _rewardsToAsset();
-        uint256 fee = (amount * vault.interestFee) / RATIO_DIVISOR;
-        amount = amount - fee;
+        repayLoan(); // Repay DLP with any unlocked DLP
+        uint256 fee = _rewardsToAsset();
         if (asset.allowance(address(vault)) = 0) {
             asset.safeApprove(address(vault), type(uint256).max);
         }
@@ -368,7 +393,9 @@ contract Leverager is ERC4626 {
         uint256 assetAmount = 0;
         for (uint256 i = 0; i < rewardBaseTokens.length; i += 1) {
             address token = rewardBaseTokens[i];
+            if (token == address(asset)) continue; // Skip if token is base asset
             uint256 amount = IERC20(token).balanceOf(address(this));
+
             if (token == address(asset)) {
                 assetAmount += amount;
             } else {
@@ -381,14 +408,24 @@ contract Leverager is ERC4626 {
                 IERC20(token).safeApprove(address(uniswapRouter), amount);
                 uniswapRouter.swapExactTokensForTokens(
                     amount,
-                    (_estimateAssetTokensOut(token, amount) * 99) / 100, // 1% slippage
+                    (assetAmountOut * 99) / 100, // 1% slippage
                     [token, address(asset)],
                     address(this),
-                    block.timestamp + 600
+                    block.timestamp + 1
                 );
             }
         }
-        return assetAmount;
+        uint256 _fee = (vault.interestfee() * assetAmount) / RATIO_DIVISOR;
+        // Swap portion of asset to WETH for fee
+        _fee = _estimateAssetTokensOut(address(asset), weth, _fee);
+        uniswapRouter.swapExactTokensForTokens(
+            _fee,
+            (_fee * 99) / 100, // 1% slippage
+            [address(asset), weth],
+            address(this),
+            block.timestamp
+        );
+        return _fee;
     }
 
     /// @dev Return estimated amount of Asset tokens to receive for given amount of tokens
@@ -410,21 +447,6 @@ contract Leverager is ERC4626 {
             (_amtIn * priceInAsset * (10 ** decimalsOut)) /
             (priceOutAsset * (10 ** decimalsIn));
     }
-
-    // /*
-    //  * @notice Exit DLP Position, take penalty and repay loan. Autoclaims rewards.
-    //  **/
-    // function exit() public {
-    //     _exit();
-    //     uint256 repayAmt = IERC20(vault.DLPAddress).balanceOf(address(this));
-    //     vault.repayBorrow(repayAmt);
-    //     DLPBorrowed -= repayAmt;
-    //     // If user withdraws collateral and exits in same tx, could lead to shortfall
-    //     require(
-    //         healthFactor() <= MINHEALTHFACTOR,
-    //         "Exit: Health factor too low"
-    //     );
-    // }
 
     /*****************
      * Lending Logic  *
@@ -452,21 +474,14 @@ contract Leverager is ERC4626 {
      * @notice If there's DLP from someone calling withdrawExpiredLocksFor
      * Call function on tend rewards
      **/
-    function repayLoan(uint256 amount) public {
-        if (amount > 0) {
-            vault.dlpaddress().safeTransferFrom(
-                msg.sender,
-                address(this),
-                amount
-            );
-        }
+    function repayLoan() public {
         uint256 repayAmt = IERC20(vault.DLPAddress).balanceOf(address(this));
         if (repayAmt == 0) return;
         vault.repayBorrow(repayAmt);
         DLPBorrowed -= repayAmt;
     }
 
-    /// @notice Top up DLP health factor to 1 + healthFactorBuffer
+    /// @notice Keeper calls up top up DLP health factor to 1 + healthFactorBuffer
     function topUp() public {
         uint256 requiredAmount = DLPToZapEstimation(0, 0, 0);
         if (requiredAmount > 0) {
@@ -506,6 +521,7 @@ contract Leverager is ERC4626 {
             return;
         }
         uint256 amountToWithdraw = assets - asset.balanceOf(address(this));
+        _unloop(amountToWithdraw);
     }
 
     function afterDeposit(uint256 assets, uint256 shares) internal override {
