@@ -19,20 +19,22 @@ contract LeveragerFactory is Initializable, OwnableUpgradeable {
     /// @notice Emitted when treasury is updated
     event TreasuryUpdated(address indexed _treasury);
 
-    event LeveragerCreated(address leverager, address indexed owner);
+    event RewardBaseTokensUpdated(address[] tokens);
 
-    mapping(address => leverager[]) public userToLeveragers;
+    event LeveragerCreated(address leverager, address asset);
 
     mapping(address => bool) public isLeverager;
 
     function initialize(
         address _vault,
         address _treasury,
-        uint256 _feePercent
+        uint256 _feePercent,
+        address[] memory _rewardBaseTokens
     ) external initializer {
         vault = _vault;
         treasury = _treasury;
         feePercent = _feePercent;
+        rewardBaseTokens = _rewardBaseTokens;
         __Ownable_init();
     }
 
@@ -56,8 +58,6 @@ contract LeveragerFactory is Initializable, OwnableUpgradeable {
         emit TreasuryUpdated(_treasury);
     }
 
-    event RewardBaseTokensUpdated(address[] tokens);
-
     /**
      * @notice Array of reward tokens
      * @param _tokens array of tokens to be used as base tokens for rewards
@@ -67,26 +67,40 @@ contract LeveragerFactory is Initializable, OwnableUpgradeable {
         emit RewardBaseTokensUpdated(_tokens);
     }
 
-    function getRewardBaseTokens() external view returns (address[] memory) {
-        return rewardBaseTokens;
-    }
-
-    function createLeverager() external onlyOwner {
-        Leverager leverager = new Leverager();
-        leveragers.push(leverager);
-        leverager.initialize(
-            lendingPool,
-            swapRouter,
-            rewardEligibleDataProvider,
-            aaveOracle,
-            cic,
-            aggregatorV3,
-            mfd,
-            vault,
-            msg.sender
+    function createLeverager(
+        uint256 _minAmountToInvest,
+        uint256 _vaultCap,
+        uint256 _loopCount,
+        uint256 _borrowRatio,
+        address _vault,
+        address _asset
+    ) external onlyOwner {
+        bytes memory _name = abi.encodePacked(
+            "Radiate Leverager - ",
+            ERC20(_asset).name()
         );
+        bytes memory _symbol = abi.encodePacked(
+            "RD-LV-",
+            ERC20(_asset).symbol()
+        );
+        Leverager leverager = new Leverager(
+            owner,
+            _minAmountToInvest,
+            _vaultCap,
+            _loopCount,
+            _borrowRatio,
+            _vault,
+            _asset,
+            _name,
+            _symbol
+        );
+        leveragers.push(leverager);
 
         emit LeveragerCreated(address(leverager, msg.sender));
+    }
+
+    function getRewardBaseTokens() external view returns (address[] memory) {
+        return rewardBaseTokens;
     }
 
     function getLeveragers() external view returns (leverager[] memory) {

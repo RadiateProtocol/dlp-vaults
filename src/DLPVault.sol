@@ -11,9 +11,17 @@ contract DLPVault is ERC4626, Ownable {
     address public DLPAddress;
     address public rewardsToken;
     uint256 public amountBorrowed;
-    uint256 public interestfee;
+    uint256 public interestfee; // Scaled by RATIO_DIVISOR
     mapping(address => uint256) public borrowedBy;
 
+    struct WithdrawalQueue {
+        address caller;
+        address owner;
+        address receiver;
+        uint256 assets;
+    }
+    WithdrawalQueue[] public withdrawalQueue;
+    uint256 public withdrawalQueueIndex;
     /* ========== EVENTS ========== */
     event RewardAdded(uint256 reward);
     event RewardPaid(address indexed user, uint256 reward);
@@ -24,6 +32,12 @@ contract DLPVault is ERC4626, Ownable {
         address indexed _borrower
     );
     event Repay(address indexed _leverager, uint256 _amount);
+    event WithdrawalQueued(
+        uint256 indexed withdrawalQueueIndex,
+        address indexed owner,
+        address indexed receiver,
+        uint256 assets
+    );
 
     constructor(
         ERC20 _asset,
@@ -58,18 +72,101 @@ contract DLPVault is ERC4626, Ownable {
     }
 
     function repayBorrow(uint256 _amount) external {
-        require(
-            factory.isLeverager(msg.sender),
-            "DLPVault: Only Leveragers can repay"
-        );
         ERC20(DLPAddress).transferFrom(msg.sender, address(this), _amount);
         if (borrowedBy[msg.sender] < _amount) {
             _amount = borrowedBy[msg.sender];
             // Prevent underflow if amount is higher than borrowed
+            // Repaid borrow can exceed debt outstanding
         }
         amountBorrowed -= _amount;
         borrowedBy[msg.sender] -= _amount;
         emit Repay(msg.sender, _amount);
+    }
+
+    /* ========== 4626 Overrides ========== */
+    function afterDeposit(
+        uint256 amount
+    ) internal override notPaused updateReward(msg.sender) {
+        processWithdrawalQueue(); // ooo it's a punzeeeee
+    }
+
+    function beforeWithdraw(
+        uint256 amount
+    ) internal override updateReward(msg.sender) {
+        require(amount > 0, "DLPVault: Cannot withdraw 0");
+    }
+
+    function totalAssets() public view override returns (uint256) {
+        return ERC20(DLPAddress).balanceOf(address(this));
+    }
+
+    // Brick redeem() to prevent users from redeeming – withdraws only
+    function previewRedeem() public view override returns (uint256) {
+        return 0;
+    }
+
+    function withdraw(
+        uint256 assets,
+        address receiver,
+        address owner
+    ) public override returns (uint256) {
+        if (msg.sender != owner) {
+            uint256 allowed = allowance[owner][msg.sender]; // Saves gas for limited approvals.
+
+            if (allowed != type(uint256).max)
+                allowance[owner][msg.sender] = allowed - shares;
+        }
+        if (assets <= ERC20(DLPAddress).balanceOf(address(this))) {
+            // Process withdrawal since there's enough cash
+            beforeWithdraw(assets);
+            _burn(owner, shares);
+
+            emit Withdraw(msg.sender, receiver, owner, assets, shares);
+
+            asset.safeTransfer(receiver, assets);
+        } else {
+            // Add to withdrawal queue
+            uint256 queueIndex = withdrawalQueue.length - withdrawalQueueIndex;
+            withdrawalQueue.push(
+                WithdrawalQueue({
+                    caller: msg.sender,
+                    owner: owner,
+                    receiver: receiver,
+                    assets: assets
+                })
+            );
+            emit WithdrawalQueued(queueIndex, owner, receiver, assets);
+            processWithdrawalQueue();
+        }
+    }
+
+    function processWithdrawalQueue() public {
+        for (uint256 i = withdrawalQueueIndex; i < queueLength; i++) {
+            WithdrawalQueue memory queueItem = withdrawalQueue[i];
+            if (
+                queueItem.assets <= ERC20(DLPAddress).balanceOf(address(this))
+            ) {
+                // Process withdrawal since there's enough cash
+                // Approval check already done in withdraw()
+                // Skip over invalid withdrawals
+                if (balanceOf(queueItem.owner) >= queueItem.assets) {
+                    beforeWithdraw(queueItem.assets);
+                    _burn(queueItem.owner, queueItem.assets);
+                    asset.safeTransfer(queueItem.receiver, queueItem.assets);
+                    emit Withdraw(
+                        queueItem.caller,
+                        queueItem.receiver,
+                        queueItem.owner,
+                        queueItem.assets,
+                        queueItem.assets
+                    );
+                }
+                delete withdrawalQueue[i];
+                withdrawalQueueIndex++;
+            } else {
+                break; // Break until there's enough cash in the vault again
+            }
+        }
     }
 
     /* ========== VIEWS ========== */
@@ -101,16 +198,6 @@ contract DLPVault is ERC4626, Ownable {
     }
 
     /* ========== MUTATIVE FUNCTIONS ========== */
-
-    function afterDeposit(
-        uint256 amount
-    ) internal override notPaused updateReward(msg.sender) {}
-
-    function beforeWithdraw(
-        uint256 amount
-    ) internal override updateReward(msg.sender) {
-        require(amount > 0, "DLPVault: Cannot withdraw 0");
-    }
 
     function getReward() public updateReward(msg.sender) {
         uint256 reward = rewards[msg.sender];
