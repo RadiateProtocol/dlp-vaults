@@ -97,7 +97,7 @@ contract DLPVault is ERC4626, Ownable {
     }
 
     function totalAssets() public view override returns (uint256) {
-        return ERC20(DLPAddress).balanceOf(address(this));
+        return ERC20(DLPAddress).balanceOf(address(this)) + amountBorrowed;
     }
 
     // Brick redeem() to prevent users from redeeming – withdraws only
