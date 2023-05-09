@@ -26,11 +26,7 @@ contract DLPVault is ERC4626, Ownable {
     event RewardAdded(uint256 reward);
     event RewardPaid(address indexed user, uint256 reward);
     event RewardsDurationUpdated(uint256 newDuration);
-    event Borrow(
-        address indexed _leverager,
-        uint256 _amount,
-        address indexed _borrower
-    );
+    event Borrow(address indexed _leverager, uint256 _amount);
     event Repay(address indexed _leverager, uint256 _amount);
     event WithdrawalQueued(
         uint256 indexed withdrawalQueueIndex,
@@ -60,15 +56,16 @@ contract DLPVault is ERC4626, Ownable {
         _notifyRewardAmount(_amount);
     }
 
-    function borrow(uint256 _amount, address _borrower) external {
+    function borrow(uint256 _amount) external returns (uint256) {
         require(
             factory.isLeverager(msg.sender),
             "DLPVault: Only Leveragers can borrow"
         );
         ERC20(DLPAddress).transfer(msg.sender, _amount);
         amountBorrowed += _amount;
-        borrowedBy[_borrower] += _amount;
-        emit Borrow(msg.sender, _amount, _borrower);
+        borrowedBy[msg.sender] += _amount;
+        emit Borrow(msg.sender, _amount);
+        return _amount;
     }
 
     function repayBorrow(uint256 _amount) external {
