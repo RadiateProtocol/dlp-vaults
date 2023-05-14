@@ -1,0 +1,29 @@
+pragma solidity ^0.8.15;
+
+import "src/Kernel.sol";
+
+abstract contract ParamConsumer is KernelAdapter {
+    Keycode internal constant PARAM_KEYCODE = Keycode.wrap("PARAM");
+    constructor(Kernel kernel_) {
+        kernel = kernel_;
+    }
+    function getParam(bytes32 key) internal view returns (uint256) {
+        return kernel.getModuleForKeycode(PARAM_KEYCODE).getParam(key);
+    }
+}
+
+contract PARAM is Module {
+    constructor(Kernel kernel_) Module(kernel_) {}
+
+    mapping(bytes32 => uint256) public params;
+
+    struct Param {}
+
+    function KEYCODE() public pure override returns (Keycode) {
+        return Keycode.wrap("PARAM");
+    }
+
+    
+
+    
+}
