@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: agpl-3.0
-pragma solidity 0.8.12;
+pragma solidity 0.8.15;
 
 /**
  * @title IDelegationToken
@@ -7,5 +7,5 @@ pragma solidity 0.8.12;
  * @author Aave
  **/
 interface IDelegationToken {
-	function delegate(address delegatee) external;
+    function delegate(address delegatee) external;
 }

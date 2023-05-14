@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: MIT
+pragma solidity 0.8.15;
 import {ERC4626} from "solmate/mixins/ERC4626.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "./LeveragerFactory.sol";
+import "src/kernel.sol";
 
-pragma solidity 0.8.12;
+contract DLPVault is Policy {
+    // =========  EVENTS ========= //
 
-contract DLPVault is ERC4626, Ownable {
-    LeveragerFactory public factory;
+    // =========  ERRORS ========= //
+
+    // =========  STATE ========= //
     address public DLPAddress;
+
     address public rewardsToken;
     uint256 public amountBorrowed;
     uint256 public interestfee; // Scaled by RATIO_DIVISOR
@@ -37,7 +40,6 @@ contract DLPVault is ERC4626, Ownable {
 
     constructor(
         ERC20 _asset,
-        LeveragerFactory _factory,
         address _rewardsToken,
         uint256 _interestfee
     ) ERC4626(_asset, "Radiate DLP Vault", "RD-DLP") {
@@ -91,10 +93,6 @@ contract DLPVault is ERC4626, Ownable {
         uint256 amount
     ) internal override updateReward(msg.sender) {
         require(amount > 0, "DLPVault: Cannot withdraw 0");
-    }
-
-    function totalAssets() public view override returns (uint256) {
-        return ERC20(DLPAddress).balanceOf(address(this)) + amountBorrowed;
     }
 
     // Brick redeem() to prevent users from redeeming – withdraws only
@@ -197,6 +195,7 @@ contract DLPVault is ERC4626, Ownable {
     /* ========== MUTATIVE FUNCTIONS ========== */
 
     function getReward() public updateReward(msg.sender) {
+        //overrides
         uint256 reward = rewards[msg.sender];
         if (reward > 0) {
             rewards[msg.sender] = 0;
