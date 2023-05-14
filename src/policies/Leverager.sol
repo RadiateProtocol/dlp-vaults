@@ -18,11 +18,13 @@ import "./interfaces/radiant-interfaces/AggregatorV3Interface.sol";
 import "./interfaces/aave/IFlashLoanSimpleReceiver.sol";
 import "./interfaces/aave/IPool.sol";
 import "./DLPVault.sol";
+import "./Kernel.sol";
+import "./modules/OlympusRoles.sol";
 
 /// @title Leverager Contract
 /// @author w
 /// @dev All function calls are currently implemented without side effects
-contract Leverager is ERC4626, IFlashLoanSimpleReceiver {
+contract Leverager is ERC4626, IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -69,11 +71,7 @@ contract Leverager is ERC4626, IFlashLoanSimpleReceiver {
     /// @notice Aave oracle address
     IAaveOracle public aaveOracle;
 
-    /// @notice Owner Address
-    address public owner;
-
     constructor(
-        address _owner,
         uint256 _minAmountToInvest,
         uint256 _vaultCap,
         uint256 _loopCount,
@@ -81,13 +79,13 @@ contract Leverager is ERC4626, IFlashLoanSimpleReceiver {
         DLPVault _vault,
         ERC20 _asset,
         string memory _name,
-        string memory _symbol
-    ) ERC4626(_asset, _name, _symbol) {
+        string memory _symbol,
+        Kernel _kernel
+    ) ERC4626(_asset, _name, _symbol) Policy(_kernel) {
         require(
             _minAmountToInvest > 0,
             "Leverager: minAmountToInvest must be greater than 0"
         );
-        owner = _owner;
         minAmountToInvest = _minAmountToInvest;
         vaultCap = _vaultCap;
         loopCount = _loopCount;
@@ -96,8 +94,26 @@ contract Leverager is ERC4626, IFlashLoanSimpleReceiver {
     }
 
     /******************
-     * Admin Logic    *
+     * Default Logic  *
      ******************/
+    function configureDependencies()
+        external
+        override
+        returns (Keycode[] memory dependencies)
+    {
+        dependencies = new Keycode[](1);
+        dependencies[0] = Keycode("ROLES");
+        ROLES = ROLESv1(getContract(dependencies[0]));
+    }
+
+    function requestPermissions()
+        external
+        view
+        override
+        returns (Permissions[] memory requests)
+    {
+        requests = new Permissions[](0);
+    }
 
     /// @notice vault cap
     uint256 public vaultCap;
@@ -114,52 +130,46 @@ contract Leverager is ERC4626, IFlashLoanSimpleReceiver {
     /// @notice deposit fee
     uint256 public depositFee;
 
-    /// @notice Ownable modifier
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Leverager: Only owner");
-        _;
-    }
-
-    /// @notice Set the owner
-    /// @param _owner The new owner
-    function setOwner(address _owner) external onlyOwner {
-        owner = _owner;
-    }
-
-    function changeVaultCap(uint256 _vaultCap) external onlyOwner {
+    function changeVaultCap(uint256 _vaultCap) external onlyRole(ADMIN_ROLE) {
         // Scaled by asset.decimals
         vaultCap = _vaultCap;
     }
 
     /// @dev Change loop count for any new deposits
-    function changeLoopCount(uint256 _loopCount) external onlyOwner {
+    function changeLoopCount(uint256 _loopCount) external onlyRole(ADMIN_ROLE) {
         loopCount = _loopCount;
     }
 
     /// @dev Change borrow ratio for any new deposits
-    function changeBorrowRatio(uint256 _borrowRatio) external onlyOwner {
+    function changeBorrowRatio(
+        uint256 _borrowRatio
+    ) external onlyRole(ADMIN_ROLE) {
         borrowRatio = _borrowRatio;
     }
 
     /// @dev Change DLP health factor
-    function changeDLPHealthFactor(uint256 _healthfactor) external onlyOwner {
+    function changeDLPHealthFactor(
+        uint256 _healthfactor
+    ) external onlyRole(ADMIN_ROLE) {
         healthFactor = _healthfactor;
     }
 
     /// @dev Set default lock index
-    function setDefaultLockIndex(uint256 _defaultLockIndex) external onlyOwner {
+    function setDefaultLockIndex(
+        uint256 _defaultLockIndex
+    ) external onlyRole(ADMIN_ROLE) {
         mfd.setDefaultLockReleaseIndex(_defaultLockIndex);
     }
 
     /// @dev Set deposit fee
-    function setDepositFee(uint256 _depositFee) external onlyOwner {
+    function setDepositFee(uint256 _depositFee) external onlyRole(GOV_ROLE) {
         mfd.setDepositFee(_depositFee);
     }
 
     /**
      * @notice Exit DLP Position, take penalty and repay DLP loan. Autoclaims rewards.
      **/
-    function exit() public onlyOwner {
+    function exit() public onlyRole(ADMIN_ROLE) {
         mfd.exit();
         uint256 repayAmt = IERC20(vault.DLPAddress).balanceOf(address(this));
         vault.repayBorrow(repayAmt);
