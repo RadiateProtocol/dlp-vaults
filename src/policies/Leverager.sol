@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.12;
+pragma solidity ^0.8.15;
 pragma abicoder v2;
 
 import "@solmate/mixins/ERC4626.sol";
@@ -27,6 +27,8 @@ import "./modules/OlympusRoles.sol";
 contract Leverager is ERC4626, IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
+
+    // todo: clean up the logic, make it more Default
 
     /// @notice Ratio Divisor
     uint256 public constant RATIO_DIVISOR = 10000;
@@ -101,9 +103,10 @@ contract Leverager is ERC4626, IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         override
         returns (Keycode[] memory dependencies)
     {
-        dependencies = new Keycode[](1);
+        dependencies = new Keycode[](2);
         dependencies[0] = Keycode("ROLES");
-        ROLES = ROLESv1(getContract(dependencies[0]));
+        ROLES = ROLESv1(kernel.getModuleAddress(dependencies[0]));
+        ROLES = getContract(dependencies[0]);
     }
 
     function requestPermissions()
