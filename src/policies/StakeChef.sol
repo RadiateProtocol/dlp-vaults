@@ -1,17 +1,28 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.15;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "./RADToken.sol";
-import "./DLPVault.sol";
+import {RolesConsumer} from "src/modules/ROLES/OlympusRoles.sol";
+import {RADToken} from "src/modules/TOKEN/RADToken.sol";
+import {DLPVault} from "./DLPVault.sol";
+import "src/Kernel.sol";
 
-contract StakeChef is Ownable {
-    DLPVault public immutable token;
+contract StakeChef is Policy, RolesConsumer {
+    // =========  EVENTS ========= //
+
+    event Deposit(address indexed _user, uint256 _amount);
+    event Withdraw(address indexed _user, uint256 _amount, uint256 _reward);
+
+    // =========  ERRORS ========= //
+
+    error WithdrawTooMuch(address _user, uint256 _amount);
+
+    // =========  STATE  ========= //
+    DLPVault public immutable dlptoken;
+    RADToken public immutable TOKEN;
     IERC20 public immutable weth;
-    IERC20 public immutable rewardToken;
-    address public treasury;
-
+    uint256 public constant SCALAR = 1e12;
     uint256 public rewardPerBlock;
     uint256 public interestPerBlock;
     uint256 public endBlock;
@@ -20,58 +31,113 @@ contract StakeChef is Ownable {
     uint256 public accDiscountPerShare;
     uint256 public totalUserAssets;
 
+    mapping(address => UserInfo) public userInfo;
+
     struct UserInfo {
         uint256 amount; // How many tokens the user has provided.
         uint256 rewardDebt; // Reward debt.
         uint256 interestDebt; // Amount taken from principal for POL
     }
 
-    mapping(address => UserInfo) public userInfo;
-
-    constructor(
-        DLPVault _token,
-        IERC20 _rewardToken,
-        address _treasury,
-        IERC20 _weth
-    ) {
-        token = _token;
-        rewardToken = _rewardToken;
-        treasury = _treasury;
+    constructor(DLPVault _token, IERC20 _weth, Kernel _kernel) Policy(_kernel) {
+        dlptoken = _token;
         weth = _weth;
     }
 
-    function updateEndBlock(uint256 _endBlock) public onlyOwner {
+    //============================================================================================//
+    //                                     DEFAULT OVERRIDES                                          //
+    //============================================================================================//
+
+    function configureDependencies()
+        external
+        override
+        returns (Keycode[] memory dependencies)
+    {
+        dependencies = new Keycode[](3);
+        dependencies[0] = toKeycode("TOKEN");
+        dependencies[1] = toKeycode("ROLES");
+        dependencies[2] = toKeycode("TRSRY");
+        ROLES = ROLESv1(getModuleAddress(dependencies[1]));
+        TOKEN = RADToken(getModuleAddress(dependencies[0]));
+        TRSRY = getModuleAddress(toKeycode("TRSRY"));
+    }
+
+    function requestPermissions()
+        external
+        view
+        override
+        returns (Permissions[] memory requests)
+    {
+        Keycode TOKEN_KEYCODE = toKeycode("TOKEN");
+        requests = new Permissions[](1);
+        requests[0] = Permissions(TOKEN_KEYCODE, TOKEN.mint.selector);
+    }
+
+    function withdrawPOL(
+        uint256 amount
+    ) external requirePermission(ADMIN_ROLE) {
+        if (dlptoken.balanceOf(address(this)) > totalUserAssets + amount) {
+            dlptoken.transfer(TRSRY, amount);
+        }
+    }
+
+    //============================================================================================//
+    //                                     ADMIN                                                  //
+    //============================================================================================//
+
+    function updateEndBlock(
+        uint256 _endBlock
+    ) public requirePermission(ADMIN_ROLE) {
         endBlock = _endBlock;
     }
 
-    function updateRewardPerBlock(uint256 _rewardPerBlock) public onlyOwner {
+    function updateRewardPerBlock(
+        uint256 _rewardPerBlock
+    ) public requirePermission(ADMIN_ROLE) {
         rewardPerBlock = _rewardPerBlock;
     }
 
     function updateInterestPerBlock(
         uint256 _interestPerBlock
-    ) public onlyOwner {
+    ) public requirePermission(ADMIN_ROLE) {
         interestPerBlock = _interestPerBlock;
     }
 
+    function withdrawPOL(
+        uint256 amount
+    ) external requirePermission(ADMIN_ROLE) {
+        if (dlptoken.balanceOf(address(this)) > totalUserAssets + amount) {
+            dlptoken.transfer(TRSRY, amount);
+        }
+    }
+
+    function _mint(address to, uint256 amount) internal {
+        if (amount > 0) {
+            TOKEN.mint(to, amount);
+        }
+    }
+
+    //============================================================================================//
+    //                                     STAKING                                                //
+    //============================================================================================//
     function updatePool() public {
         if (block.number <= lastRewardBlock) {
             return;
         }
-        uint256 tokenSupply = token.balanceOf(address(this));
+        uint256 tokenSupply = dlptoken.balanceOf(address(this));
         if (tokenSupply == 0) {
             lastRewardBlock = block.number;
             return;
         }
 
         // claim rewards or other logic here
-        token.claimRewards();
+        dlptoken.claimRewards();
         // transfer to treasury
-        weth.transfer(treasury, weth.balanceOf(address(this)));
+        weth.transfer(TRSRY, weth.balanceOf(address(this)));
         // add new minting logic here
         uint256 multiplier = block.number - lastRewardBlock;
         uint256 reward = multiplier * rewardPerBlock;
-        accRewardPerShare += (reward * 1e12) / tokenSupply;
+        accRewardPerShare += (reward * SCALAR) / tokenSupply;
         accDiscountPerShare += multiplier * interestPerBlock; // Fixed rate
         lastRewardBlock = block.number;
     }
@@ -81,25 +147,26 @@ contract StakeChef is Ownable {
         updatePool();
         if (user.amount > 0) {
             uint256 pending = (user.amount * accRewardPerShare) /
-                1e12 -
+                SCALAR -
                 user.rewardDebt;
-            rewardToken.transfer(msg.sender, pending);
+            _mint(msg.sender, pending);
         }
         token.transferFrom(msg.sender, address(this), _amount);
         user.amount += _amount;
-        user.rewardDebt = (user.amount * accRewardPerShare) / 1e12;
-        user.interestDebt = (user.amount * accDiscountPerShare) / 1e12;
+        user.rewardDebt = (user.amount * accRewardPerShare) / SCALAR;
+        user.interestDebt = (user.amount * accDiscountPerShare) / SCALAR;
         totalUserAssets += _amount;
+        emit Deposit(msg.sender, _amount);
     }
 
     function withdraw(uint256 _amount) public {
         UserInfo storage user = userInfo[msg.sender];
-        require(user.amount >= _amount, "withdraw: not good");
+        if (user.amount >= _amount) WithdrawTooMuch(msg.sender, _amount);
         updatePool();
         uint256 _accDiscountPerShare = accDiscountPerShare; // Save sloads
         uint256 _accRewardPerShare = accRewardPerShare; // Save sloads
         uint256 netInterest = (user.amount * _accDiscountPerShare) /
-            1e12 -
+            SCALAR -
             user.interestDebt;
         if (netInterest >= user.amount) {
             // Accrued interest is greater than principal – only withdraw rewards
@@ -111,10 +178,11 @@ contract StakeChef is Ownable {
                 (21 * 1e11) -
                 user.rewardDebt;
             if (_pending > 0) {
-                rewardToken.transfer(msg.sender, _pending);
+                _mint(msg.sender, _pending);
             }
 
             delete userInfo[msg.sender];
+            emit Withdraw(msg.sender, 0, _pending);
             return;
         } else {
             uint256 interest = user.amount - netInterest;
@@ -128,17 +196,22 @@ contract StakeChef is Ownable {
         // Get midpoint of initial and net principal - assume constant reward rate
         uint256 pending = ((user.amount * 2 - netInterest) *
             _accRewardPerShare) /
-            (2 * 1e12) -
+            (2 * SCALAR) -
             user.rewardDebt;
         if (pending > 0) {
-            rewardToken.transfer(msg.sender, pending);
+            _mint(msg.sender, pending);
         }
         user.amount -= _amount;
-        user.interestDebt = (user.amount * _accDiscountPerShare) / 1e12;
-        user.rewardDebt = (user.amount * _accRewardPerShare) / 1e12;
+        user.interestDebt = (user.amount * _accDiscountPerShare) / SCALAR;
+        user.rewardDebt = (user.amount * _accRewardPerShare) / SCALAR;
         totalUserAssets -= _amount;
-        token.transfer(msg.sender, _amount);
+        dlptoken.transfer(msg.sender, _amount);
+        emit Withdraw(msg.sender, _amount, pending);
     }
+
+    //============================================================================================//
+    //                                     VIEW                                                   //
+    //============================================================================================//
 
     function pendingReward(address _user) external view returns (uint256) {
         UserInfo storage user = userInfo[_user];
@@ -147,9 +220,9 @@ contract StakeChef is Ownable {
         if (block.number > lastRewardBlock && lpSupply != 0) {
             uint256 multiplier = block.number - lastRewardBlock;
             uint256 reward = multiplier * rewardPerBlock;
-            _accRewardPerShare += (reward * 1e12) / lpSupply;
+            _accRewardPerShare += (reward * SCALAR) / lpSupply;
         }
-        return (user.amount * _accRewardPerShare) / 1e12 - user.rewardDebt;
+        return (user.amount * _accRewardPerShare) / SCALAR - user.rewardDebt;
     }
 
     function pendingInterest(address _user) external view returns (uint256) {
@@ -161,12 +234,7 @@ contract StakeChef is Ownable {
                 (lastRewardBlock - block.number) *
                 interestPerBlock;
         }
-        return (user.amount * _accDiscountPerShare) / 1e12 - user.interestDebt;
-    }
-
-    function withdrawPOL(uint256 amount) external onlyOwner {
-        if (token.balanceOf(address(this)) > totalUserAssets + amount) {
-            token.transfer(treasury, amount);
-        }
+        return
+            (user.amount * _accDiscountPerShare) / SCALAR - user.interestDebt;
     }
 }

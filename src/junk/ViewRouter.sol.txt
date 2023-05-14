@@ -1,13 +1,17 @@
 import "src/Kernel.sol";
 
 abstract contract ViewConsumer{
-    Keycode public constant PARAM = toKeycode("PARAM");
+    constructor (address ViewRouter) {
+
+    }
+    Keycode public constant PARAM = 0x504152414d;
+
     function viewModule(Keycode keycode_, uint256 data_) external view virtual returns (bytes32 value){
         
     }
 
     function viewParam(bytes32 name_) external view virtual returns (bytes32 value){
-        abi.encodePacked(name_)
+        ViewRouter.staticCall(abi.encodePacked(PARAM, name_));
     } 
 
 
