@@ -6,13 +6,15 @@ import {RolesConsumer, ROLESv1} from "../modules/ROLES/OlympusRoles.sol";
 
 import {Kernel, Policy} from "../Kernel.sol";
 
-contract DLPVault is Policy, RolesConsumer {
+contract DLPVault is Policy, RolesConsumer, ERC4626 {
     // =========  EVENTS ========= //
     event RewardAdded(uint256 reward);
     event RewardPaid(address indexed user, uint256 reward);
     event RewardsDurationUpdated(uint256 newDuration);
     event Borrow(address indexed _leverager, uint256 _amount);
     event Repay(address indexed _leverager, uint256 _amount);
+    event FeePercentUpdated(uint256 feePercent);
+    event RewardBaseTokensUpdated(address[] rewardBaseTokens);
     event WithdrawalQueued(
         uint256 indexed withdrawalQueueIndex,
         address indexed owner,
@@ -25,9 +27,10 @@ contract DLPVault is Policy, RolesConsumer {
     // =========  STATE ========= //
     ERC20 public DLPAddress;
     ERC20 public rewardsToken;
-    address[] public rewardTokens;
+    address[] public rewardBaseTokens;
     uint256 public amountBorrowed;
     uint256 public interestfee; // Scaled by RATIO_DIVISOR
+    uint256 public feePercent; // Deposit Fee
     mapping(address => uint256) public borrowedBy;
 
     uint256 public withdrawalQueueIndex;
@@ -44,16 +47,17 @@ contract DLPVault is Policy, RolesConsumer {
         ERC20 _rewardsToken,
         uint256 _interestfee,
         Kernel _kernel
-    ) Policy(_kernel) ERC20("Radiate-DLP Vault", "RD-DLP", 18) {
+    ) ERC4626(_asset, "Radiate-DLP Vault", "RD-DLP") Policy(_kernel) {
         DLPAddress = _asset;
         rewardsToken = _rewardsToken; // WETH
-        interest = _interest;
+        interestfee = _interestfee;
     }
 
     //============================================================================================//
     //                                     DEFAULT OVERRIDES                                      //
     //============================================================================================//
 
+    // todo figure why identifier not found
     function configureDependencies()
         external
         override
@@ -145,25 +149,30 @@ contract DLPVault is Policy, RolesConsumer {
         require(amount > 0, "DLPVault: Cannot withdraw 0");
     }
 
+    // Brick redeem() to prevent users from redeeming – withdraws only
+    function previewRedeem(uint256) public view override returns (uint256) {
+        return 0;
+    }
+
     function withdraw(
         uint256 assets,
         address receiver,
         address owner
-    ) public returns (uint256) {
+    ) public override returns (uint256) {
         if (msg.sender != owner) {
             uint256 allowed = allowance[owner][msg.sender]; // Saves gas for limited approvals.
 
             if (allowed != type(uint256).max)
-                allowance[owner][msg.sender] = allowed - shares;
+                allowance[owner][msg.sender] = allowed - assets;
         }
         if (assets <= ERC20(DLPAddress).balanceOf(address(this))) {
             // Process withdrawal since there's enough cash
             beforeWithdraw(assets);
-            _burn(owner, shares);
+            _burn(owner, assets);
 
-            emit Withdraw(msg.sender, receiver, owner, assets, shares);
+            emit Withdraw(msg.sender, receiver, owner, assets, assets);
 
-            asset.safeTransfer(receiver, assets);
+            asset.transfer(receiver, assets);
         } else {
             // Add to withdrawal queue
             uint256 queueIndex = withdrawalQueue.length - withdrawalQueueIndex;
@@ -181,18 +190,20 @@ contract DLPVault is Policy, RolesConsumer {
     }
 
     function processWithdrawalQueue() public {
-        for (uint256 i = withdrawalQueueIndex; i < queueLength; i++) {
+        for (
+            uint256 i = withdrawalQueueIndex;
+            i < withdrawalQueue.length;
+            i++
+        ) {
             WithdrawalQueue memory queueItem = withdrawalQueue[i];
-            if (
-                queueItem.assets <= ERC20(DLPAddress).balanceOf(address(this))
-            ) {
+            if (queueItem.assets <= DLPAddress.balanceOf(address(this))) {
                 // Process withdrawal since there's enough cash
                 // Approval check already done in withdraw()
                 // Skip over invalid withdrawals
-                if (balanceOf(queueItem.owner) >= queueItem.assets) {
+                if (balanceOf[queueItem.owner] >= queueItem.assets) {
                     beforeWithdraw(queueItem.assets);
                     _burn(queueItem.owner, queueItem.assets);
-                    asset.safeTransfer(queueItem.receiver, queueItem.assets);
+                    asset.transfer(queueItem.receiver, queueItem.assets);
                     emit Withdraw(
                         queueItem.caller,
                         queueItem.receiver,
@@ -213,13 +224,24 @@ contract DLPVault is Policy, RolesConsumer {
     //                             REWARDS LOGIC                                                  //
     //============================================================================================//
 
+    /* ========== STATE VARIABLES ========== */
+
+    uint256 public periodFinish = 0;
+    uint256 public rewardRate = 0;
+    uint256 public rewardsDuration = 7 days;
+    uint256 public lastUpdateTime;
+    uint256 public rewardPerTokenStored;
+
+    mapping(address => uint256) public userRewardPerTokenPaid;
+    mapping(address => uint256) public rewards;
+
     /* ========== VIEWS ========== */
     function lastTimeRewardApplicable() public view returns (uint256) {
         return block.timestamp < periodFinish ? block.timestamp : periodFinish;
     }
 
     function rewardPerToken() public view returns (uint256) {
-        if (_totalSupply == 0) {
+        if (totalAssets() == 0) {
             return rewardPerTokenStored;
         }
         return
@@ -227,18 +249,18 @@ contract DLPVault is Policy, RolesConsumer {
                 lastTimeRewardApplicable() -
                 lastUpdateTime) *
                 rewardRate *
-                1e18) / totalSupply();
+                1e18) / totalSupply;
     }
 
     function earned(address account) public view returns (uint256) {
         return
-            ((balanceOf(account) *
+            ((balanceOf[account] *
                 rewardPerToken() -
                 userRewardPerTokenPaid[account]) / 1e18) + rewards[account];
     }
 
     function getRewardForDuration() external view returns (uint256) {
-        return rewardRate.mul(rewardsDuration);
+        return rewardRate * rewardsDuration;
     }
 
     /* ========== MUTATIVE FUNCTIONS ========== */
@@ -248,7 +270,7 @@ contract DLPVault is Policy, RolesConsumer {
         uint256 reward = rewards[msg.sender];
         if (reward > 0) {
             rewards[msg.sender] = 0;
-            rewardsToken.safeTransfer(msg.sender, reward);
+            rewardsToken.transfer(msg.sender, reward);
             emit RewardPaid(msg.sender, reward);
         }
     }
