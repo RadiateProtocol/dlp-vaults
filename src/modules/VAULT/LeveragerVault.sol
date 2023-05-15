@@ -4,16 +4,22 @@ import "src/kernel.sol";
 import {ERC4626} from "solmate/mixins/ERC4626.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
+import {VAULTv1} from "./VAULT.v1.sol";
 
-contract DLPVault is ERC4626, Module {
+contract LeveragerVault is VAULTv1 {
     using SafeTransferLib for ERC20;
 
     constructor(
         Kernel kernel_,
-        ERC20 dlpaddress_
-    ) ERC4626(dlpaddress_, "Radiate DLP Vault", "RD-DLP") Module(kernel_) {
-        kernel = kernel_;
-    }
+        ERC20 asset_
+    )
+        ERC4626(
+            asset_,
+            string(abi.encodePacked("Radiate ", asset.name())),
+            string(abi.encodePacked("RD-", asset.symbol()))
+        )
+        Module(kernel_)
+    {}
 
     function VERSION()
         external
@@ -26,7 +32,7 @@ contract DLPVault is ERC4626, Module {
     }
 
     function KEYCODE() public pure override returns (Keycode) {
-        return toKeycode("DLPVT");
+        return toKeycode("LVGVT");
     }
 
     uint256 public amountBorrowed;
@@ -35,35 +41,12 @@ contract DLPVault is ERC4626, Module {
         return asset.balanceOf(address(this)) + amountBorrowed;
     }
 
-    // Brick methods to allow for context to be passed in
-    function withdraw(
-        uint256 assets,
-        address receiver,
-        address owner
-    ) public override permissioned returns (uint256) {}
-
-    function redeem(
-        uint256 shares,
-        address receiver,
-        address owner
-    ) public override permissioned returns (uint256) {}
-
-    function deposit(
-        uint256 assets,
-        address receiver
-    ) public override permissioned returns (uint256) {}
-
-    function mint(
-        uint256 shares,
-        address receiver
-    ) public override permissioned returns (uint256) {}
-
-    function withdraw(
+    function _withdraw(
         uint256 assets,
         address receiver,
         address owner,
         address sender
-    ) external permissioned returns (uint256 shares) {
+    ) external override permissioned returns (uint256 shares) {
         shares = previewWithdraw(assets); // No need to check for rounding error, previewWithdraw rounds up.
 
         if (sender != owner) {
@@ -82,12 +65,12 @@ contract DLPVault is ERC4626, Module {
         asset.safeTransfer(receiver, assets);
     }
 
-    function redeem(
-        uint256 assets,
+    function _redeem(
+        uint256 shares,
         address receiver,
         address owner,
         address sender
-    ) external permissioned returns (uint256 shares) {
+    ) external override permissioned returns (uint256 assets) {
         if (sender != owner) {
             uint256 allowed = allowance[owner][sender]; // Saves gas for limited approvals.
 
@@ -107,11 +90,11 @@ contract DLPVault is ERC4626, Module {
         asset.safeTransfer(receiver, assets);
     }
 
-    function mint(
-        uint256 assets,
+    function _mint(
+        uint256 shares,
         address receiver,
         address sender
-    ) external permissioned returns (uint256 shares) {
+    ) external override permissioned returns (uint256 assets) {
         assets = previewMint(shares); // No need to check for rounding error, previewMint rounds up.
 
         // Need to transfer before minting or ERC777s could reenter.
@@ -124,11 +107,11 @@ contract DLPVault is ERC4626, Module {
         afterDeposit(assets, shares);
     }
 
-    function deposit(
+    function _deposit(
         uint256 assets,
         address receiver,
         address sender
-    ) external permissioned returns (uint256 shares) {
+    ) external override permissioned returns (uint256 shares) {
         // Check for rounding error since we round down in previewDeposit.
         require((shares = previewDeposit(assets)) != 0, "ZERO_SHARES");
 
@@ -142,16 +125,16 @@ contract DLPVault is ERC4626, Module {
         afterDeposit(assets, shares);
     }
 
-    // Hook to update the amount
-    function updateBorrowedAsset(int256 _amount) external permissioned {
-        if (_amount > 0) {
-            amountBorrowed += uint256(_amount);
-        } else {
-            amountBorrowed -= uint256(_amount);
-        }
+    function _invest(uint256 amount) external override permissioned {
+        asset.transfer(msg.sender, amount);
+        amountBorrowed += amount;
     }
 
-    function beforeWithdraw(uint256 assets, uint256 shares) internal override {}
-
-    function afterDeposit(uint256 assets, uint256 shares) internal override {}
+    function _divest(uint256 amount) external override permissioned {
+        if (amountBorrowed > amount) {
+            amountBorrowed -= amount;
+        } else {
+            amountBorrowed = 0;
+        }
+    }
 }

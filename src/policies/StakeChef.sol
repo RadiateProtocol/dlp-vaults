@@ -73,39 +73,29 @@ contract StakeChef is Policy, RolesConsumer {
         requests[0] = Permissions(TOKEN_KEYCODE, TOKEN.mint.selector);
     }
 
-    function withdrawPOL(
-        uint256 amount
-    ) external requirePermission(ADMIN_ROLE) {
-        if (dlptoken.balanceOf(address(this)) > totalUserAssets + amount) {
-            dlptoken.transfer(TRSRY, amount);
-        }
-    }
-
     //============================================================================================//
     //                                     ADMIN                                                  //
     //============================================================================================//
 
     function updateEndBlock(
         uint256 _endBlock
-    ) public requirePermission(ADMIN_ROLE) {
+    ) public requirePermission("admin") {
         endBlock = _endBlock;
     }
 
     function updateRewardPerBlock(
         uint256 _rewardPerBlock
-    ) public requirePermission(ADMIN_ROLE) {
+    ) public requirePermission("admin") {
         rewardPerBlock = _rewardPerBlock;
     }
 
     function updateInterestPerBlock(
         uint256 _interestPerBlock
-    ) public requirePermission(ADMIN_ROLE) {
+    ) public requirePermission("admin") {
         interestPerBlock = _interestPerBlock;
     }
 
-    function withdrawPOL(
-        uint256 amount
-    ) external requirePermission(ADMIN_ROLE) {
+    function withdrawPOL(uint256 amount) external requirePermission("admin") {
         if (dlptoken.balanceOf(address(this)) > totalUserAssets + amount) {
             dlptoken.transfer(TRSRY, amount);
         }
