@@ -1,6 +1,6 @@
 ## Contracts for the Radiate Protocol
 
-To install Foundry, the tool used to develop these contracts, please follow this (guide)[https://book.getfoundry.sh/].
+To install Foundry, the tool used to develop these contracts, please follow this [guide](https://book.getfoundry.sh/).
 
 
 Radiate Protocol is focused on allowing for 4626 tokenzied looping strategies for Radiant, the cross chain money market on Arbitrum (and BSC). By allowing for single sided staking, this is not only more efficient to manage, but this is also easier to run.
