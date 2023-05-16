@@ -25,10 +25,23 @@ import "../interfaces/aave/IPool.sol";
 contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     using SafeERC20 for IERC20;
 
-    // todo: clean up the logic, make it more Default
     // =========  EVENTS ========= //
 
+    event BorrowDLP(uint256 DLPBorrowed, address caller);
+    event RewardsToAsset(uint256 fee, uint256 totalAssetAmount);
+    event DefaultLockIndexChanged(uint256 defaultLockIndex);
+    event DLPHealthFactorChanged(uint256 healthfactor);
+    event BorrowRatioChanged(uint256 borrowRatio);
+    event RewardsToAsset(_fee, assetAmount);
+    event Unloop(uint256 amount);
+    event EmergencyUnloop(uint256 amount);
+
     // =========  ERRORS ========= //
+
+    error Leverager_NOT_ENOUGH_BORROW(uint256 shortfall);
+    error Leverager_VAULT_CAP_REACHED();
+    error Leverager_ONLY_SELF_INIT(address initiator);
+    error Leverager_ONLY_AAVE_LENDING_POOL(address caller);
 
     // =========  STATE ========= //
     uint256 public constant RATIO_DIVISOR = 10000;
@@ -134,9 +147,6 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     /// @notice DLP Health Factor – default for Leverager is 6%
     uint256 public healthFactor = (RATIO_DIVISOR * 1.06) / RATIO_DIVISOR;
 
-    /// @notice deposit fee
-    uint256 public depositFee;
-
     function changeVaultCap(uint256 _vaultCap) external onlyRole("admin") {
         // Scaled by asset.decimals
         vaultCap = _vaultCap;
@@ -152,6 +162,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         uint256 _borrowRatio
     ) external onlyRole("admin") {
         borrowRatio = _borrowRatio;
+        emit BorrowRatioChanged(_borrowRatio);
     }
 
     /// @dev Change DLP health factor
@@ -159,6 +170,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         uint256 _healthfactor
     ) external onlyRole("admin") {
         healthFactor = _healthfactor;
+        emit DLPHealthFactorChanged(_healthfactor);
     }
 
     /// @dev Set default lock index
@@ -166,18 +178,14 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         uint256 _defaultLockIndex
     ) external onlyRole("admin") {
         mfd.setDefaultLockReleaseIndex(_defaultLockIndex);
-    }
-
-    /// @dev Set deposit fee
-    function setDepositFee(uint256 _depositFee) external onlyRole(GOV_ROLE) {
-        mfd.setDepositFee(_depositFee);
+        emit DefaultLockIndexChanged(_defaultLockIndex);
     }
 
     /// @dev Emergency Unloop – withdraws all funds from Radiant to vault
     /// For migrations, or in case of emergency
-    function emergencyUnloop() external onlyRole("admin") {
-        _unloop(10);
-        // todo set real amount here
+    function emergencyUnloop(uint256 _amount) external onlyRole("admin") {
+        _unloop(_amount);
+        emit EmergencyUnloop(_amount);
     }
 
     /**
@@ -233,7 +241,10 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
      * @dev Loop the deposit and borrow of an asset (removed eth loop, deposit WETH directly)
      **/
     function _loop() internal {
-        require(borrowRatio <= RATIO_DIVISOR, "Invalid ratio");
+        require(
+            borrowRatio <= RATIO_DIVISOR,
+            Leverager_ERROR_BORROW_RATIO(borrowRatio)
+        );
         uint16 referralCode = 0;
         uint256 amount = asset.balanceOf(address(this));
         uint256 interestRateMode = 2; // variable
@@ -263,7 +274,8 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         uint256 requiredAmount = DLPToZapEstimation(amount);
 
         uint256 _dlpBorrowed = DLPvault.borrow(requiredAmount);
-        if (_dlpBorrowed < requiredAmount) revert("Not enough borrow");
+        if (_dlpBorrowed < requiredAmount)
+            revert(Leverager_NOT_ENOUGH_BORROW(requiredAmount - _dlpBorrowed));
         if (
             IERC20(DLPvault.DLPAddress).allowance(
                 address(this),
@@ -349,6 +361,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
             [],
             0
         );
+        emit Unloop(_amount);
     }
 
     /**
@@ -363,15 +376,15 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     ) external returns (bool) {
         require(
             msg.sender == address(aaveLendingPool),
-            "Leverager: only aave lending pool"
+            Leverager_ONLY_AAVE_LENDING_POOL(msg.sender)
         );
         require(
             initiator == address(this),
-            "Leverager: only this contract can initiate"
+            Leverager_ONLY_SELF_INIT(initiator)
         );
-        if (asset.allowance(address(this), address(lendingPool)) == 0) {
-            asset.safeApprove(address(lendingPool), type(uint256).max);
-            // ok since initiator and sender are checked
+        // Repay approval
+        if (asset.allowance(address(this), address(aaveLendingPool)) == 0) {
+            asset.safeApprove(address(aaveLendingPool), type(uint256).max);
         }
 
         lendingPool.repay(asset, amount, 2, address(this));
@@ -384,7 +397,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
 
     /**
      * @notice Claim rewards
-     * @dev Claim unlocked rewards, sell them for WETH and send portion of WETH to vault as interest.
+     * @dev Claim unlocked rewards, sell them for asset and send portion of WETH to vault as interest.
      */
     function claim() public {
         mfd.claimRewards();
@@ -401,7 +414,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
      * @dev Sell all rewards to base asset on Sushiswap via swaprouter
      */
     function _rewardsToAsset() internal returns (uint256) {
-        address[] memory rewardBaseTokens = rewardPool.getRewardBaseTokens();
+        address[] memory rewardBaseTokens = DLPvault.getRewardBaseTokens();
         uint256 assetAmount = 0;
         for (uint256 i = 0; i < rewardBaseTokens.length; i += 1) {
             address token = rewardBaseTokens[i];
@@ -437,6 +450,8 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
             address(this),
             block.timestamp
         );
+
+        emit RewardsToAsset(_fee, assetAmount);
         return _fee;
     }
 
@@ -498,12 +513,15 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         uint256 requiredAmount = DLPToZapEstimation(0);
         if (requiredAmount > 0) {
             uint256 _dlpBorrowed = DLPvault.borrow(requiredAmount);
-            if (_dlpBorrowed < requiredAmount) revert("Not enough borrow");
+            if (_dlpBorrowed < requiredAmount)
+                revert(
+                    Leverager_NOT_ENOUGH_BORROW(requiredAmount - _dlpBorrowed)
+                );
             uint256 duration = mfd.defaultLockIndex(address(this));
             mfd.stake(_dlpBorrowed, address(this), duration);
             DLPBorrowed += _dlpBorrowed;
         }
-        emit borrow(DLPBorrowed);
+        emit BorrowDLP(DLPBorrowed, msg.sender);
     }
 
     //============================================================================================//
@@ -531,7 +549,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
 
     function deposit(uint256 assets, address owner) public returns (uint256) {
         if (assets + totalAssets() >= vaultCap)
-            revert("Leverager: Vault cap reached");
+            revert(Leverager_VAULT_CAP_REACHED());
         uint256 shares_ = VAULT._deposit(assets, owner, msg.sender);
         afterDeposit();
         return shares_;
@@ -543,7 +561,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         address owner
     ) public returns (uint256) {
         if (shares + VAULT.totalSupply() >= vaultCap)
-            revert("Leverager: Vault cap reached");
+            revert(Leverager_VAULT_CAP_REACHED());
         uint256 assets_ = VAULT._mint(shares, sender, owner);
         afterDeposit();
         return assets_;
@@ -555,6 +573,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         uint256 cash_ = asset.balanceOf(address(VAULT));
         if (cash_ >= minAmountToInvest) {
             VAULT._invest(cash_);
+            uint256 depositFee = DLPvault.depositFee();
             if (depositFee > 0) {
                 // Fee is necessary to prevent deposit and withdraw trolling
                 uint256 fee = (cash_ * depositFee) / RATIO_DIVISOR;
@@ -577,7 +596,6 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     // Lightly modified from Mudgen's Diamond-3
     /// @dev Delegatecalls LeveragerVault any non core function call
     fallback() external payable {
-        // todo change this
         address vaultAddress = address(VAULT);
         assembly {
             // copy function selector and any arguments
