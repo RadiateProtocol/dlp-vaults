@@ -22,6 +22,10 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         uint256 assets
     );
     // =========  ERRORS ========= //
+    error DLPVault_previous_reward_period_not_finished(uint256 periodFinish);
+    error DLPVault_provided_reward_rate_too_high(uint256 rewardRate);
+    error DLPVault_WithdrawZero(address sender);
+    error DLPVault_FeePercentTooHigh(uint256 _feePercent);
 
     //todo implement custom errors
     // =========  STATE ========= //
@@ -86,7 +90,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     }
 
     function setDepositFee(uint256 _feePercent) external onlyRole("admin") {
-        require(_feePercent <= 1e4, "Invalid ratio");
+        require(_feePercent <= 1e4, DLPVault_FeePercentTooHigh(_feePercent));
         feePercent = _feePercent;
         emit FeePercentUpdated(_feePercent);
     }
@@ -146,7 +150,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     }
 
     function beforeWithdraw(uint256 amount) internal updateReward(msg.sender) {
-        require(amount > 0, "DLPVault: Cannot withdraw 0");
+        require(amount > 0, DLPVault_WithdrawZero(msg.sender));
     }
 
     // Brick redeem() to prevent users from redeeming – withdraws only
@@ -295,7 +299,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         uint balance = rewardsToken.balanceOf(address(this));
         require(
             rewardRate <= balance / rewardsDuration,
-            "Provided reward too high"
+            DLPVault_provided_reward_rate_too_high(rewardRate)
         );
 
         lastUpdateTime = block.timestamp;
@@ -308,7 +312,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     ) external onlyRole("admin") {
         require(
             block.timestamp > periodFinish,
-            "Previous rewards period must be complete before changing the duration for the new period"
+            DLPVault_previous_reward_period_not_finished(periodFinish)
         );
         rewardsDuration = _rewardsDuration;
         emit RewardsDurationUpdated(rewardsDuration);
