@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.12;
+pragma solidity 0.8.15;
 pragma abicoder v2;
 
 import "./LockedBalance.sol";
@@ -10,19 +10,13 @@ import "./IMintableToken.sol";
 interface IMultiFeeDistribution is IFeeDistribution {
     function exit(bool claimRewards) external;
 
-    function stake(
-        uint256 amount,
-        address onBehalfOf,
-        uint256 typeIndex
-    ) external;
+    function stake(uint256 amount, address onBehalfOf, uint256 typeIndex) external;
 
     function rdntToken() external view returns (IMintableToken);
 
     function getPriceProvider() external view returns (address);
 
-    function lockInfo(
-        address user
-    ) external view returns (LockedBalance[] memory);
+    function lockInfo(address user) external view returns (LockedBalance[] memory);
 
     function autocompoundEnabled(address user) external view returns (bool);
 
@@ -34,13 +28,9 @@ interface IMultiFeeDistribution is IFeeDistribution {
 
     function zapVestingToLp(address _address) external returns (uint256);
 
-    function withdrawExpiredLocksFor(
-        address _address
-    ) external returns (uint256);
+    function withdrawExpiredLocksFor(address _address) external returns (uint256);
 
-    function claimableRewards(
-        address account
-    ) external view returns (IFeeDistribution.RewardData[] memory rewards);
+    function claimableRewards(address account) external view returns (IFeeDistribution.RewardData[] memory rewards);
 
     function setDefaultRelockTypeIndex(uint256 _index) external;
 
@@ -52,6 +42,8 @@ interface IMultiFeeDistribution is IFeeDistribution {
 
     function mint(address user, uint256 amount, bool withPenalty) external;
 
+    function withdraw(uint256 amount) external;
+
     function getAllRewards() external;
 
     function relock() external;
@@ -60,15 +52,9 @@ interface IMultiFeeDistribution is IFeeDistribution {
 interface IMFDPlus is IMultiFeeDistribution {
     function getLastClaimTime(address _user) external returns (uint256);
 
-    function claimBounty(
-        address _user,
-        bool _execute
-    ) external returns (bool issueBaseBounty);
+    function claimBounty(address _user, bool _execute) external returns (bool issueBaseBounty);
 
-    function claimCompound(
-        address _user,
-        bool _execute
-    ) external returns (uint256 bountyAmt);
+    function claimCompound(address _user, bool _execute) external returns (uint256 bountyAmt);
 
     function setAutocompound(bool _newVal) external;
 

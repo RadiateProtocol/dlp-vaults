@@ -1,35 +1,45 @@
 // SPDX-License-Identifier: agpl-3.0
-pragma solidity 0.8.12;
+pragma solidity 0.8.15;
 pragma experimental ABIEncoderV2;
 
 interface IEligibilityDataProvider {
-	function refresh(address user) external;
+    function refresh(address user) external;
 
-	function updatePrice() external;
+    function updatePrice() external;
 
-	function requiredEthValue(address user) external view returns (uint256 required);
+    function requiredEthValue(
+        address user
+    ) external view returns (uint256 required);
 
-	function isEligibleForRewards(address _user) external view returns (bool isEligible);
+    function isEligibleForRewards(
+        address _user
+    ) external view returns (bool isEligible);
 
-	function lastEligibleTime(address user) external view returns (uint256 lastEligibleTimestamp);
+    function lastEligibleTime(
+        address user
+    ) external view returns (uint256 lastEligibleTimestamp);
 
-	function lockedUsdValue(address user) external view returns (uint256);
+    function lockedUsdValue(address user) external view returns (uint256);
 
-	function requiredUsdValue(address user) external view returns (uint256 required);
+    function requiredUsdValue(
+        address user
+    ) external view returns (uint256 required);
 
-	function lastEligibleStatus(address user) external view returns (bool);
+    function lastEligibleStatus(address user) external view returns (bool);
 
-	function isMarketDisqualified(address user) external view returns (bool);
+    function isMarketDisqualified(address user) external view returns (bool);
 
-	function rewardEligibleAmount(address token) external view returns (uint256);
+    function rewardEligibleAmount(
+        address token
+    ) external view returns (uint256);
 
-	function setDqTime(address _user, uint256 _time) external;
+    function setDqTime(address _user, uint256 _time) external;
 
-	function getDqTime(address _user) external view returns (uint256);
+    function getDqTime(address _user) external view returns (uint256);
 
-	function autoprune() external returns (uint256 processed);
+    function autoprune() external returns (uint256 processed);
 
-	function requiredDepositRatio() external view returns (uint256);
+    function requiredDepositRatio() external view returns (uint256);
 
-	function RATIO_DIVISOR() external view returns (uint256);
+    function RATIO_DIVISOR() external view returns (uint256);
 }
