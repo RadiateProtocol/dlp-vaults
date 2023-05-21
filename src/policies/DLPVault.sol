@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.15;
+import "../Kernel.sol";
+import {RolesConsumer, ROLESv1} from "../modules/ROLES/OlympusRoles.sol";
 import {ERC4626} from "solmate/mixins/ERC4626.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
-import {RolesConsumer, ROLESv1} from "../modules/ROLES/OlympusRoles.sol";
 
-import {Kernel, Policy} from "../Kernel.sol";
 
 contract DLPVault is Policy, RolesConsumer, ERC4626 {
+
     // =========  EVENTS ========= //
     event RewardAdded(uint256 reward);
     event RewardPaid(address indexed user, uint256 reward);
@@ -61,20 +62,19 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     //                                     DEFAULT OVERRIDES                                      //
     //============================================================================================//
 
-    // todo figure why identifier not found
     function configureDependencies()
         external
         override
         returns (Keycode[] memory dependencies)
     {
         dependencies = new Keycode[](1);
-        dependencies[0] = Keycode("ROLES");
-        ROLES = ROLESv1(kernel.getModuleAddress(dependencies[0]));
+        dependencies[0] = toKeycode("ROLES");
+        ROLES = ROLESv1(getModuleAddress(dependencies[0]));
     }
 
     function requestPermissions()
         external
-        view
+        pure
         override
         returns (Permissions[] memory requests)
     {
@@ -90,7 +90,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     }
 
     function setDepositFee(uint256 _feePercent) external onlyRole("admin") {
-        require(_feePercent <= 1e4, DLPVault_FeePercentTooHigh(_feePercent));
+        if(_feePercent <= 1e4) revert DLPVault_FeePercentTooHigh(_feePercent);
         feePercent = _feePercent;
         emit FeePercentUpdated(_feePercent);
     }
@@ -141,20 +141,20 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     //============================================================================================//
 
     function deposit(uint256 amount) external {
-        ERC20(DLPAddress).transferFrom(msg.sender, address(this), amount);
+        DLPAddress.transferFrom(msg.sender, address(this), amount);
         _mint(msg.sender, amount);
     }
 
-    function afterDeposit(uint256 amount) internal updateReward(msg.sender) {
+    function afterDeposit(uint256) internal updateReward(msg.sender) {
         processWithdrawalQueue(); // ooo it's a punzeeeee
     }
 
     function beforeWithdraw(uint256 amount) internal updateReward(msg.sender) {
-        require(amount > 0, DLPVault_WithdrawZero(msg.sender));
+        if(amount > 0) revert DLPVault_WithdrawZero(msg.sender);
     }
 
     // Brick redeem() to prevent users from redeeming – withdraws only
-    function previewRedeem(uint256) public view override returns (uint256) {
+    function previewRedeem(uint256) public pure override returns (uint256) {
         return 0;
     }
 
@@ -169,7 +169,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
             if (allowed != type(uint256).max)
                 allowance[owner][msg.sender] = allowed - assets;
         }
-        if (assets <= ERC20(DLPAddress).balanceOf(address(this))) {
+        if (assets <= DLPAddress.balanceOf(address(this))) {
             // Process withdrawal since there's enough cash
             beforeWithdraw(assets);
             _burn(owner, assets);
@@ -177,6 +177,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
             emit Withdraw(msg.sender, receiver, owner, assets, assets);
 
             asset.transfer(receiver, assets);
+            return assets;
         } else {
             // Add to withdrawal queue
             uint256 queueIndex = withdrawalQueue.length - withdrawalQueueIndex;
@@ -190,6 +191,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
             );
             emit WithdrawalQueued(queueIndex, owner, receiver, assets);
             processWithdrawalQueue();
+            return 0;
         }
     }
 
@@ -222,6 +224,10 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
                 break; // Break until there's enough cash in the vault again
             }
         }
+    }
+
+    function totalAssets() public view override returns (uint256) {
+        return amountBorrowed + DLPAddress.balanceOf(address(this));
     }
 
     //============================================================================================//
@@ -297,10 +303,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         // very high values of rewardRate in the earned and rewardsPerToken functions;
         // Reward + leftover must be less than 2^256 / 10^18 to avoid overflow.
         uint balance = rewardsToken.balanceOf(address(this));
-        require(
-            rewardRate <= balance / rewardsDuration,
-            DLPVault_provided_reward_rate_too_high(rewardRate)
-        );
+        if(rewardRate <= balance / rewardsDuration) revert DLPVault_provided_reward_rate_too_high(rewardRate);
 
         lastUpdateTime = block.timestamp;
         periodFinish = block.timestamp + rewardsDuration;
@@ -310,10 +313,8 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     function setRewardsDuration(
         uint256 _rewardsDuration
     ) external onlyRole("admin") {
-        require(
-            block.timestamp > periodFinish,
-            DLPVault_previous_reward_period_not_finished(periodFinish)
-        );
+        if(block.timestamp > periodFinish) revert
+            DLPVault_previous_reward_period_not_finished(periodFinish);
         rewardsDuration = _rewardsDuration;
         emit RewardsDurationUpdated(rewardsDuration);
     }

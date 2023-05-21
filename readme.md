@@ -9,3 +9,5 @@ Radiate Protocol is focused on allowing for 4626 tokenzied looping strategies fo
 We're allowing for single sided staking of DLP tokens in exchange for a WETH denominated cut of the looping yield.
 
 If stakers want to receive boosted yield, they can deposit into the Staking Chef, where their stakes will be vested into PoL, and they'll earn yields denominated in RDT tokens.
+
+

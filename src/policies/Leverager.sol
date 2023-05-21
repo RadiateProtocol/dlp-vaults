@@ -2,7 +2,7 @@
 pragma solidity ^0.8.15;
 pragma abicoder v2;
 
-import {Kernel, Policy} from "../Kernel.sol";
+import "../Kernel.sol";
 import {DLPVault} from "./DLPVault.sol";
 import {RolesConsumer, ROLESv1} from "../modules/ROLES/OlympusRoles.sol";
 import {LeveragerVault, VAULTv1} from "../modules/VAULT/LeveragerVault.sol";
@@ -32,7 +32,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     event DefaultLockIndexChanged(uint256 defaultLockIndex);
     event DLPHealthFactorChanged(uint256 healthfactor);
     event BorrowRatioChanged(uint256 borrowRatio);
-    event RewardsToAsset(_fee, assetAmount);
+    event RewardsToAsset(uint256 _fee, uint256 assetAmount);
     event Unloop(uint256 amount);
     event EmergencyUnloop(uint256 amount);
 
@@ -42,6 +42,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     error Leverager_VAULT_CAP_REACHED();
     error Leverager_ONLY_SELF_INIT(address initiator);
     error Leverager_ONLY_AAVE_LENDING_POOL(address caller);
+    error Leverager_ERROR_BORROW_RATIO(uint256 borrowRatio);
 
     // =========  STATE ========= //
     uint256 public constant RATIO_DIVISOR = 10000;
@@ -49,14 +50,16 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     /// @notice WETH on Arbitrum
     address public constant WETH = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
 
-    address public constant rdnt = 0x3082CC23568eA640225c2467653dB90e9250AaA0;
+    address public constant RDNT = 0x3082CC23568eA640225c2467653dB90e9250AaA0;
+
+    uint256 public immutable minAmountToInvest;
 
     /// @notice Aave lending pool address (for flashloans)
-    IPool public constant aaveLendingPool =
+    IPool public constant AAVEPOOL =
         0x794a61358D6845594F94dc1DB02A252b5b4814aD;
 
     /// @notice Lending Pool address
-    ILendingPool public lendingPool =
+    ILendingPool public constant LENDINGPOOL =
         0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1;
 
     /// @notice Sushiswap router address
@@ -69,21 +72,19 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     IChefIncentivesController public cic =
         0xFf785dE8a851048a65CbE92C84d4167eF3Ce9BAC;
 
-    uint256 public immutable minAmountToInvest;
-
-    DLPVault public DLPvault;
+    DLPVault public DLPault;
 
     IAaveOracle public immutable aaveOracle;
 
-    ERC20 public immutable asset;
+    IERC20 public immutable asset;
 
     constructor(
         uint256 _minAmountToInvest,
         uint256 _vaultCap,
         uint256 _loopCount,
         uint256 _borrowRatio,
-        DLPVault _vault,
-        ERC20 _asset,
+        DLPVault _dlpVault,
+        IERC20 _asset,
         Kernel _kernel
     ) Policy(_kernel) {
         require(
@@ -94,7 +95,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         vaultCap = _vaultCap;
         loopCount = _loopCount;
         borrowRatio = _borrowRatio;
-        vault = _vault;
+        DLPvault = _dlpVault;
         asset = _asset;
     }
 
@@ -107,11 +108,13 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         override
         returns (Keycode[] memory dependencies)
     {
-        dependencies = new Keycode[](2);
-        dependencies[0] = Keycode("ROLES");
-        dependencies[1] = Keycode("LVGVT");
-        ROLES = ROLESv1(kernel.getModuleAddress(dependencies[0]));
-        VAULT = VAULTv1(getContract(dependencies[1]));
+        dependencies = new Keycode[](3);
+        dependencies[0] = toKeycode("ROLES");
+        dependencies[1] = toKeycode("LVGVT");
+        dependencies[2] = toKeycode("TRSRY");
+        ROLES = ROLESv1(getModuleAddress(dependencies[0]));
+        VAULT = VAULTv1(getModuleAddress(dependencies[1]));
+        TRSRY = TRSRYv1(getModuleAddress(dependencies[2]));
     }
 
     function requestPermissions()
@@ -241,10 +244,8 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
      * @dev Loop the deposit and borrow of an asset (removed eth loop, deposit WETH directly)
      **/
     function _loop() internal {
-        require(
-            borrowRatio <= RATIO_DIVISOR,
-            Leverager_ERROR_BORROW_RATIO(borrowRatio)
-        );
+        if(borrowRatio <= RATIO_DIVISOR) revert Leverager_ERROR_BORROW_RATIO(borrowRatio);
+
         uint16 referralCode = 0;
         uint256 amount = asset.balanceOf(address(this));
         uint256 interestRateMode = 2; // variable
@@ -319,7 +320,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         } else {
             // Transform USD to DLP price
             uint256 deltaUsdValue = required - locked; //decimals === 8
-            uint256 wethPrice = aaveOracle.getAssetPrice(address(weth));
+            uint256 wethPrice = aaveOracle.getAssetPrice(address(WETH));
             uint8 priceDecimal = IChainlinkAggregator(
                 aaveOracle.getSourceOfAsset(address(weth))
             ).decimals();
