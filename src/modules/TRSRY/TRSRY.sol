@@ -5,7 +5,7 @@ pragma solidity ^0.8.15;
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {Kernel, Module, Keycode} from "src/Kernel.sol";
 
-contract DefaultTreasury is Module {
+contract Treasury is Module {
     constructor(Kernel kernel_) Module(kernel_) {}
 
     function KEYCODE() public pure override returns (Keycode) {
@@ -31,4 +31,5 @@ contract DefaultTreasury is Module {
     function withdraw(ERC20 asset_, uint256 amount_) external permissioned {
         asset_.transfer(msg.sender, amount_);
     }
+    
 }
