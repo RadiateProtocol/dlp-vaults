@@ -3,9 +3,10 @@ pragma solidity ^0.8.15;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import {RolesConsumer} from "src/modules/ROLES/OlympusRoles.sol";
+import {RolesConsumer, ROLESv1} from "src/modules/ROLES/OlympusRoles.sol";
 import {RADToken} from "src/modules/TOKEN/RADToken.sol";
 import {DLPVault} from "./DLPVault.sol";
+
 import "src/Kernel.sol";
 
 contract StakeChef is Policy, RolesConsumer {
@@ -19,8 +20,9 @@ contract StakeChef is Policy, RolesConsumer {
     error WithdrawTooMuch(address _user, uint256 _amount);
 
     // =========  STATE  ========= //
+    RADToken public TOKEN;
+    address public TRSRY;
     DLPVault public immutable dlptoken;
-    RADToken public immutable TOKEN;
     IERC20 public immutable weth;
     uint256 public constant SCALAR = 1e12;
     uint256 public rewardPerBlock;
@@ -79,23 +81,23 @@ contract StakeChef is Policy, RolesConsumer {
 
     function updateEndBlock(
         uint256 _endBlock
-    ) public requirePermission("admin") {
+    ) public onlyRole("admin") {
         endBlock = _endBlock;
     }
 
     function updateRewardPerBlock(
         uint256 _rewardPerBlock
-    ) public requirePermission("admin") {
+    ) public onlyRole("admin") {
         rewardPerBlock = _rewardPerBlock;
     }
 
     function updateInterestPerBlock(
         uint256 _interestPerBlock
-    ) public requirePermission("admin") {
+    ) public onlyRole("admin") {
         interestPerBlock = _interestPerBlock;
     }
 
-    function withdrawPOL(uint256 amount) external requirePermission("admin") {
+    function withdrawPOL(uint256 amount) external onlyRole("admin") {
         if (dlptoken.balanceOf(address(this)) > totalUserAssets + amount) {
             dlptoken.transfer(TRSRY, amount);
         }
@@ -120,8 +122,7 @@ contract StakeChef is Policy, RolesConsumer {
             return;
         }
 
-        // claim rewards or other logic here
-        dlptoken.claimRewards();
+        dlptoken.getReward();
         // transfer to treasury
         weth.transfer(TRSRY, weth.balanceOf(address(this)));
         // add new minting logic here
@@ -141,7 +142,7 @@ contract StakeChef is Policy, RolesConsumer {
                 user.rewardDebt;
             _mint(msg.sender, pending);
         }
-        token.transferFrom(msg.sender, address(this), _amount);
+        dlptoken.transferFrom(msg.sender, address(this), _amount);
         user.amount += _amount;
         user.rewardDebt = (user.amount * accRewardPerShare) / SCALAR;
         user.interestDebt = (user.amount * accDiscountPerShare) / SCALAR;
@@ -151,7 +152,7 @@ contract StakeChef is Policy, RolesConsumer {
 
     function withdraw(uint256 _amount) public {
         UserInfo storage user = userInfo[msg.sender];
-        if (user.amount >= _amount) WithdrawTooMuch(msg.sender, _amount);
+        if (user.amount >= _amount) revert WithdrawTooMuch(msg.sender, _amount);
         updatePool();
         uint256 _accDiscountPerShare = accDiscountPerShare; // Save sloads
         uint256 _accRewardPerShare = accRewardPerShare; // Save sloads
@@ -206,7 +207,7 @@ contract StakeChef is Policy, RolesConsumer {
     function pendingReward(address _user) external view returns (uint256) {
         UserInfo storage user = userInfo[_user];
         uint256 _accRewardPerShare = accRewardPerShare;
-        uint256 lpSupply = token.balanceOf(address(this));
+        uint256 lpSupply = dlptoken.balanceOf(address(this));
         if (block.number > lastRewardBlock && lpSupply != 0) {
             uint256 multiplier = block.number - lastRewardBlock;
             uint256 reward = multiplier * rewardPerBlock;
@@ -218,7 +219,7 @@ contract StakeChef is Policy, RolesConsumer {
     function pendingInterest(address _user) external view returns (uint256) {
         UserInfo storage user = userInfo[_user];
         uint256 _accDiscountPerShare = accDiscountPerShare;
-        uint256 lpSupply = token.balanceOf(address(this));
+        uint256 lpSupply = dlptoken.balanceOf(address(this));
         if (block.number > lastRewardBlock && lpSupply != 0) {
             _accDiscountPerShare +=
                 (lastRewardBlock - block.number) *

@@ -247,8 +247,6 @@ contract Kernel {
         _;
     }
 
-    function viewRouter() external view returns (address) {}
-
     function isPolicyActive(Policy policy_) public view returns (bool) {
         return
             activePolicies.length > 0 &&
