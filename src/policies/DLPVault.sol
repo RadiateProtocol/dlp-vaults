@@ -23,6 +23,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     error DLPVault_previous_reward_period_not_finished(uint256 periodFinish);
     error DLPVault_provided_reward_rate_too_high(uint256 rewardRate);
     error DLPVault_WithdrawZero(address sender);
+    error DLPVault_MintDisabled();
     error DLPVault_FeePercentTooHigh(uint256 _feePercent);
 
     //todo implement custom errors
@@ -78,7 +79,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     }
 
     function setDepositFee(uint256 _feePercent) external onlyRole("admin") {
-        if (_feePercent <= 1e4) revert DLPVault_FeePercentTooHigh(_feePercent);
+        if (_feePercent >= 1e4) revert DLPVault_FeePercentTooHigh(_feePercent);
         feePercent = _feePercent;
         emit FeePercentUpdated(_feePercent);
     }
@@ -112,6 +113,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         }
         amountBorrowed -= _amount;
         borrowedBy[msg.sender] -= _amount;
+        processWithdrawalQueue();
         emit Repay(msg.sender, _amount);
     }
 
@@ -124,23 +126,13 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     //                               VAULT LOGIC                                                  //
     //============================================================================================//
 
-    function deposit(uint256 amount) external {
+    function deposit(uint256 amount, address receiver) public override returns(uint256) {
         DLPAddress.transferFrom(msg.sender, address(this), amount);
-        _mint(msg.sender, amount);
+        afterDeposit(amount);
+        _mint(receiver, amount);
+        return amount;
     }
 
-    function afterDeposit(uint256) internal updateReward(msg.sender) {
-        processWithdrawalQueue(); // ooo it's a punzeeeee
-    }
-
-    function beforeWithdraw(uint256 amount) internal updateReward(msg.sender) {
-        if (amount > 0) revert DLPVault_WithdrawZero(msg.sender);
-    }
-
-    // Brick redeem() to prevent users from redeeming – withdraws only
-    function previewRedeem(uint256) public pure override returns (uint256) {
-        return 0;
-    }
 
     function withdraw(uint256 assets, address receiver, address owner) public override returns (uint256) {
         if (msg.sender != owner) {
@@ -173,19 +165,24 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
 
     function processWithdrawalQueue() public {
         for (uint256 i = withdrawalQueueIndex; i < withdrawalQueue.length; i++) {
+            
             WithdrawalQueue memory queueItem = withdrawalQueue[i];
+            
             if (queueItem.assets <= DLPAddress.balanceOf(address(this))) {
                 // Process withdrawal since there's enough cash
                 // Approval check already done in withdraw()
-                // Skip over invalid withdrawals
+
+                // If user balance dips below withdrawal amount, their withdraw request gets cancelled
                 if (balanceOf[queueItem.owner] >= queueItem.assets) {
                     beforeWithdraw(queueItem.assets);
                     _burn(queueItem.owner, queueItem.assets);
                     asset.transfer(queueItem.receiver, queueItem.assets);
+                    
                     emit Withdraw(
                         queueItem.caller, queueItem.receiver, queueItem.owner, queueItem.assets, queueItem.assets
                     );
                 }
+
                 delete withdrawalQueue[i];
                 withdrawalQueueIndex++;
             } else {
@@ -194,8 +191,35 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         }
     }
 
+    // Internal functions
+    function afterDeposit(uint256) internal {
+        if(withdrawalQueueIndex != withdrawalQueue.length){
+            processWithdrawalQueue(); // ooo it's a punzeeeee
+        }
+        /// @dev removed updateReward bc it causes div by 0.
+    }
+
+    function beforeWithdraw(uint256 amount) internal updateReward(msg.sender) {
+        if (amount == 0) revert DLPVault_WithdrawZero(msg.sender);
+    }
+
     function totalAssets() public view override returns (uint256) {
         return amountBorrowed + DLPAddress.balanceOf(address(this));
+    }
+
+    // Brick redeem() to prevent users from redeeming – withdraws only
+    function previewRedeem(uint256) public pure override returns (uint256) {
+        return 0;
+    }
+    
+    // Brick mint() to prevent users from mints – deposits only
+    function mint(uint256, address) public pure override returns (uint256) {
+        revert DLPVault_MintDisabled();
+    }
+
+    // Brick previewMint() to prevent users from minting – deposits only
+    function previewMint(uint256) public pure override returns (uint256) {
+        return 0;
     }
 
     //============================================================================================//
@@ -261,7 +285,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         // very high values of rewardRate in the earned and rewardsPerToken functions;
         // Reward + leftover must be less than 2^256 / 10^18 to avoid overflow.
         uint256 balance = rewardsToken.balanceOf(address(this));
-        if (rewardRate <= balance / rewardsDuration) revert DLPVault_provided_reward_rate_too_high(rewardRate);
+        if (rewardRate > balance / rewardsDuration) revert DLPVault_provided_reward_rate_too_high(rewardRate);
 
         lastUpdateTime = block.timestamp;
         periodFinish = block.timestamp + rewardsDuration;
@@ -269,7 +293,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     }
 
     function setRewardsDuration(uint256 _rewardsDuration) external onlyRole("admin") {
-        if (block.timestamp > periodFinish) revert DLPVault_previous_reward_period_not_finished(periodFinish);
+        if (block.timestamp < periodFinish) revert DLPVault_previous_reward_period_not_finished(periodFinish);
         rewardsDuration = _rewardsDuration;
         emit RewardsDurationUpdated(rewardsDuration);
     }
