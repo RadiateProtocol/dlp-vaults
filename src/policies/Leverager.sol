@@ -228,7 +228,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
      *
      */
     function _loop() internal {
-        if (borrowRatio <= RATIO_DIVISOR) revert Leverager_ERROR_BORROW_RATIO(borrowRatio);
+        if (borrowRatio >= RATIO_DIVISOR) revert Leverager_ERROR_BORROW_RATIO(borrowRatio);
 
         uint16 referralCode = 0;
         uint256 amount = asset.balanceOf(address(this));
@@ -320,7 +320,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
      */
     function executeOperation(address, uint256 amount, uint256, address initiator, bytes calldata)
         external
-        returns (bool)
+        returns (bool success)
     {
         if (msg.sender != address(aaveLendingPool)) {
             revert Leverager_ONLY_AAVE_LENDING_POOL(msg.sender);
@@ -333,6 +333,7 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
 
         lendingPool.repay(address(asset), amount, 2, address(this));
         lendingPool.withdraw(address(asset), amount, address(this));
+        return true;
     }
 
     //============================================================================================//

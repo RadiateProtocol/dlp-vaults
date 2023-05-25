@@ -21,6 +21,7 @@ import "./IAsset.sol";
 import "./IAuthorizer.sol";
 import "./IFlashLoanRecipient.sol";
 import "./IProtocolFeesCollector.sol";
+import "./IWETH.sol";
 
 pragma solidity >=0.7.0 <0.9.0;
 
