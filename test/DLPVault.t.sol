@@ -2,6 +2,8 @@
 pragma solidity ^0.8.13;
 
 import "forge-std/Test.sol";
+import "forge-std/console2.sol";
+
 import {DLPVault} from "../src/policies/DLPVault.sol";
 import {MockERC20} from "./MockERC20.sol";
 import {ERC20} from "@solmate/tokens/ERC20.sol";
@@ -9,7 +11,6 @@ import {Treasury} from "../src/modules/TRSRY/TRSRY.sol";
 import {OlympusRoles} from "../src/modules/ROLES/OlympusRoles.sol";
 import {RolesAdmin} from "../src/policies/RolesAdmin.sol";
 import "../src/Kernel.sol";
-import "forge-std/console2.sol";
 
 import {UserFactory} from "./lib/UserFactory.sol";
 
