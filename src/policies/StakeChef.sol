@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import {RolesConsumer, ROLESv1} from "src/modules/ROLES/OlympusRoles.sol";
 import {RADToken} from "src/modules/TOKEN/RADToken.sol";
 import {DLPVault} from "./DLPVault.sol";
-import "forge-std/console2.sol";
+// import "forge-std/console2.sol";
 
 import "src/Kernel.sol";
 
@@ -49,6 +49,7 @@ contract StakeChef is Policy, RolesConsumer {
     constructor(DLPVault _token, IERC20 _weth, Kernel _kernel) Policy(_kernel) {
         dlptoken = _token;
         weth = _weth;
+        lastRewardBlock = block.timestamp;
     }
 
     //============================================================================================//
@@ -85,7 +86,7 @@ contract StakeChef is Policy, RolesConsumer {
     //============================================================================================//
 
     function updateEndBlock(uint256 _endBlock) public onlyRole("admin") {
-        if (_endBlock <= block.number) {
+        if (_endBlock <= block.timestamp) {
             revert InvalidEndBlock(_endBlock);
         }
         endBlock = _endBlock;
@@ -127,7 +128,7 @@ contract StakeChef is Policy, RolesConsumer {
     //                                     STAKING                                                //
     //============================================================================================//
     function updatePool() public {
-        if (block.number == lastRewardBlock || totalUserAssets == 0) {
+        if (block.timestamp == lastRewardBlock || totalUserAssets == 0) {
             return;
         }
 
@@ -136,12 +137,14 @@ contract StakeChef is Policy, RolesConsumer {
         if (_wethBalance > 0) {
             weth.transfer(TRSRY, _wethBalance);
         }
-
-        uint256 multiplier = block.number - lastRewardBlock;
+        uint256 lastBlock = (block.timestamp < endBlock)
+            ? block.timestamp
+            : endBlock;
+        uint256 multiplier = lastBlock - lastRewardBlock;
         uint256 reward = multiplier * rewardPerBlock;
-        accRewardPerShare += (reward * SCALAR) / totalUserAssets;
+        accRewardPerShare += reward / totalUserAssets;
         accDiscountPerShare += multiplier * interestPerBlock; // Fixed rate
-        lastRewardBlock = block.number;
+        lastRewardBlock = lastBlock;
     }
 
     function deposit(uint256 _amount) public {
@@ -170,8 +173,10 @@ contract StakeChef is Policy, RolesConsumer {
         } else if (user.amount + user.interestDebt < _currentDebt + _amount) {
             revert WithdrawTooMuch(msg.sender, _amount);
         } else {
-            totalUserAssets -= (_amount + _currentDebt);// todo check this
-            user.amount = (user.interestDebt + user.amount) - (_amount + _currentDebt);
+            totalUserAssets -= (_amount + _currentDebt); // todo check this
+            user.amount =
+                (user.interestDebt + user.amount) -
+                (_amount + _currentDebt);
         }
         if (_amount != 0) {
             claimRewards(msg.sender);
@@ -199,52 +204,56 @@ contract StakeChef is Policy, RolesConsumer {
     //                                     VIEW                                                   //
     //============================================================================================//
 
-    function rewardsBalanceOf(address _user) public view returns (uint256 _netRewards) {
+    function rewardsBalanceOf(
+        address _user
+    ) public view returns (uint256 _netRewards) {
         UserInfo memory user = userInfo[_user];
         uint256 _accRewardPerShare = accRewardPerShare;
+        uint256 _accDiscountPerShare = accDiscountPerShare;
+        uint256 lastBlock = (block.timestamp < endBlock)
+            ? block.timestamp
+            : endBlock;
+        if (lastBlock > lastRewardBlock && totalUserAssets != 0) {
+            uint256 multiplier = lastBlock - lastRewardBlock;
+            uint256 reward = (multiplier * rewardPerBlock);
+            _accRewardPerShare += reward / totalUserAssets;
 
-        if (block.number > lastRewardBlock && totalUserAssets != 0) {
-            uint256 multiplier = block.number - lastRewardBlock;
-            uint256 reward = multiplier * rewardPerBlock;
-            _accRewardPerShare += (reward * SCALAR) / totalUserAssets;
-            console2.log("accRewardPerShare", _accRewardPerShare);
+            // update accDiscountPerShare
+            _accDiscountPerShare += multiplier * interestPerBlock;
         }
-            console2.log("accRewardPerShare", _accRewardPerShare);
 
         uint256 _currentAmount = user.amount + user.interestDebt;
-        console2.log("currentDebt", _currentAmount);
-        uint256 _interest = (user.amount * accDiscountPerShare) / SCALAR;
-        console2.log("interest", _interest);
-
+        uint256 _interest = (user.amount * _accDiscountPerShare) / SCALAR;
         uint256 _netOutput = (_currentAmount > _interest)
             ? _currentAmount - _interest
             : 0;
 
-        console2.log("interest", _netOutput);
         uint256 _avgRewards = ((_currentAmount + _netOutput) *
-            _accRewardPerShare) / (2*SCALAR);
-        console2.log("avgRewards", _avgRewards);
-        
-        _netRewards = (user.rewardDebt < _avgRewards) ? _avgRewards - user.rewardDebt : 0;
-        console2.log("_netRewards", _netRewards);
+            _accRewardPerShare) / 2;
+
+        _netRewards = (user.rewardDebt < _avgRewards)
+            ? _avgRewards - user.rewardDebt
+            : 0;
     }
 
     function balanceOf(address _user) public view returns (uint256) {
         UserInfo memory user = userInfo[_user];
         uint256 _accDiscountPerShare = accDiscountPerShare;
-
-        if (block.number > lastRewardBlock && totalUserAssets != 0) {
+        // If endBlock has already passed
+        uint256 lastBlock = (block.timestamp < endBlock)
+            ? block.timestamp
+            : endBlock;
+        if (lastBlock > lastRewardBlock && totalUserAssets != 0) {
             _accDiscountPerShare +=
-                (block.number - lastRewardBlock) *
+                (lastBlock - lastRewardBlock) *
                 interestPerBlock;
         }
-        uint256 _currentDebt = user.amount + user.interestDebt;
+        uint256 _currentAmount = user.amount + user.interestDebt;
         uint256 _interest = (user.amount * _accDiscountPerShare) / SCALAR;
-        if (_currentDebt > _interest) {
-            return _currentDebt - _interest;
+        if (_currentAmount > _interest) {
+            return _currentAmount - _interest;
         } else {
             return 0;
         }
-
     }
 }
