@@ -10,8 +10,8 @@ import {ERC20} from "@solmate/tokens/ERC20.sol";
 import {StakeChef} from "src/policies/StakeChef.sol";
 import {DLPVault} from "src/policies/DLPVault.sol";
 
-import {MockDLPVault} from "./MockDLPVault.sol";
-import {MockERC20} from "./MockERC20.sol";
+import {MockDLPVault} from "./mocks/MockDLPVault.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
 import "src/Kernel.sol";
 import "forge-std/console2.sol";
 
@@ -83,8 +83,7 @@ contract StakeChefTest is Test {
         vm.startPrank(alice);
         dlpVault.approve(address(stakeChef), amount);
         stakeChef.deposit(amount);
-        console2.log("stakeChef.balanceOf(alice)", stakeChef.balanceOf(alice));
-        // assertEq(stakeChef.balanceOf(alice), amount);
+        assertEq(stakeChef.balanceOf(alice), amount);
     }
 
     function test_depositWithdraw() public {
@@ -94,24 +93,34 @@ contract StakeChefTest is Test {
         dlpVault.approve(address(stakeChef), amount);
         stakeChef.deposit(amount);
         stakeChef.withdraw(amount);
-        console2.log("stakeChef.balanceOf(alice)", stakeChef.balanceOf(alice));
+        assertEq(stakeChef.balanceOf(alice), 0);
     }
 
-    // function test_interestReward() public {
-    //     vm.startPrank(admin);
-    //     stakeChef.updateEndBlock(1000);
-    //     stakeChef.updateRewardPerBlock(10); // 
-    //     // stakeChef.updateInterestRate(100); 
-    //     uint256 amount = 100;
-    //     dlpVault.mint(alice, amount);
-    //     vm.startPrank(alice);
-    //     dlpVault.approve(address(stakeChef), amount);
-    //     stakeChef.deposit(amount);
-    //     stakeChef.withdraw(amount);
-    //     console2.log("stakeChef.balanceOf(alice)", stakeChef.balanceOf(alice));
+    function test_interestReward() public {
+        vm.startPrank(admin);
+        stakeChef.updateEndBlock(1000);
+        stakeChef.updateRewardPerBlock(10); 
+        stakeChef.updateInterestPerBlock(10);  // 
+        uint256 amount = 100;
+        mintAndDeposit(alice, amount);
+        assertEq(stakeChef.balanceOf(alice), amount);
+        assertEq(stakeChef.rewardsBalanceOf(alice), 0); 
+        uint256 rewards = stakeChef.claimRewards(alice);
+        console2.log("rewards", rewards);
+        vm.warp(10);
 
-    // }
+        console2.log("stakeChef.balanceOf(alice)", stakeChef.balanceOf(alice));
+        console2.log("stakeChef.balanceOf(alice)", stakeChef.rewardsBalanceOf(alice));
 
+    }
+
+
+    function mintAndDeposit(address user, uint256 amount) public {
+        dlpVault.mint(user, amount);
+        vm.startPrank(user);
+        dlpVault.approve(address(stakeChef), amount);
+        stakeChef.deposit(amount);
+    }
     
 
     
