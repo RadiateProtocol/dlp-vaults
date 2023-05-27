@@ -5,7 +5,7 @@ import "forge-std/Test.sol";
 import "forge-std/console2.sol";
 
 import {DLPVault} from "../src/policies/DLPVault.sol";
-import {MockERC20} from "./MockERC20.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
 import {ERC20} from "@solmate/tokens/ERC20.sol";
 import {Treasury} from "../src/modules/TRSRY/TRSRY.sol";
 import {OlympusRoles} from "../src/modules/ROLES/OlympusRoles.sol";

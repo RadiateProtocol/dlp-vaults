@@ -29,7 +29,7 @@ contract StakeChef is Policy, RolesConsumer {
     address public TRSRY;
     DLPVault public immutable dlptoken;
     IERC20 public immutable weth;
-    uint256 public constant SCALAR = 1e6; // SCALAR IS 1e6 BC BLOCKTIMES ON ARBI ARE SO QUICK
+    uint256 public constant SCALAR = 1e7; // Scalar is 1e7 since blocktimes on arbi are so quick, approx 266k blocks per day
     uint256 public rewardPerBlock;
     uint256 public interestPerBlock;
     uint256 public endBlock;
@@ -148,10 +148,7 @@ contract StakeChef is Policy, RolesConsumer {
         UserInfo storage user = userInfo[msg.sender];
         updatePool();
         if (user.amount > 0) {
-            uint256 pending = (user.amount * accRewardPerShare) /
-                SCALAR -
-                user.rewardDebt;
-            _mint(msg.sender, pending);
+            _claimRewards(msg.sender);
         }
         dlptoken.transferFrom(msg.sender, address(this), _amount);
         user.amount += _amount;
@@ -173,8 +170,8 @@ contract StakeChef is Policy, RolesConsumer {
         } else if (user.amount + user.interestDebt < _currentDebt + _amount) {
             revert WithdrawTooMuch(msg.sender, _amount);
         } else {
-            totalUserAssets -= (_amount + _currentDebt);
-            user.amount += user.interestDebt - (_amount + _currentDebt);
+            totalUserAssets -= (_amount + _currentDebt);// todo check this
+            user.amount = (user.interestDebt + user.amount) - (_amount + _currentDebt);
         }
         if (_amount != 0) {
             claimRewards(msg.sender);
@@ -188,21 +185,21 @@ contract StakeChef is Policy, RolesConsumer {
     }
 
     function _claimRewards(address _user) internal returns (uint256) {
-        uint256 currentDebt = rewardsBalanceOf(_user);
-        if (currentDebt > 0) {
-            _mint(_user, currentDebt);
+        uint256 _rewards = rewardsBalanceOf(_user);
+        if (_rewards > 0) {
+            _mint(_user, _rewards);
             UserInfo storage user = userInfo[_user];
-            user.rewardDebt += currentDebt;
+            user.rewardDebt += _rewards;
         }
-        emit RewardClaimed(_user, currentDebt);
-        return currentDebt;
+        emit RewardClaimed(_user, _rewards);
+        return _rewards;
     }
 
     //============================================================================================//
     //                                     VIEW                                                   //
     //============================================================================================//
 
-    function rewardsBalanceOf(address _user) public view returns (uint256) {
+    function rewardsBalanceOf(address _user) public view returns (uint256 _netRewards) {
         UserInfo memory user = userInfo[_user];
         uint256 _accRewardPerShare = accRewardPerShare;
 
@@ -210,36 +207,44 @@ contract StakeChef is Policy, RolesConsumer {
             uint256 multiplier = block.number - lastRewardBlock;
             uint256 reward = multiplier * rewardPerBlock;
             _accRewardPerShare += (reward * SCALAR) / totalUserAssets;
+            console2.log("accRewardPerShare", _accRewardPerShare);
         }
+            console2.log("accRewardPerShare", _accRewardPerShare);
 
-        uint256 _currentDebt = user.amount + user.interestDebt;
+        uint256 _currentAmount = user.amount + user.interestDebt;
+        console2.log("currentDebt", _currentAmount);
         uint256 _interest = (user.amount * accDiscountPerShare) / SCALAR;
+        console2.log("interest", _interest);
 
-        uint256 _netOutput = (_currentDebt > _interest)
-            ? _currentDebt - _interest
+        uint256 _netOutput = (_currentAmount > _interest)
+            ? _currentAmount - _interest
             : 0;
 
-        uint256 _avgRewards = ((_currentDebt + _netOutput) *
-            _accRewardPerShare) / SCALAR;
-        return
-            (user.rewardDebt < _avgRewards) ? _avgRewards - user.rewardDebt : 0;
+        console2.log("interest", _netOutput);
+        uint256 _avgRewards = ((_currentAmount + _netOutput) *
+            _accRewardPerShare) / (2*SCALAR);
+        console2.log("avgRewards", _avgRewards);
+        
+        _netRewards = (user.rewardDebt < _avgRewards) ? _avgRewards - user.rewardDebt : 0;
+        console2.log("_netRewards", _netRewards);
     }
 
     function balanceOf(address _user) public view returns (uint256) {
         UserInfo memory user = userInfo[_user];
         uint256 _accDiscountPerShare = accDiscountPerShare;
 
-        if (block.number > lastRewardBlock) {
+        if (block.number > lastRewardBlock && totalUserAssets != 0) {
             _accDiscountPerShare +=
-                (lastRewardBlock - block.number) *
+                (block.number - lastRewardBlock) *
                 interestPerBlock;
         }
         uint256 _currentDebt = user.amount + user.interestDebt;
-        uint256 _interest = (_currentDebt * _accDiscountPerShare) / SCALAR;
+        uint256 _interest = (user.amount * _accDiscountPerShare) / SCALAR;
         if (_currentDebt > _interest) {
             return _currentDebt - _interest;
         } else {
             return 0;
         }
+
     }
 }
