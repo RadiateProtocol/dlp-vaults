@@ -13,8 +13,8 @@ contract RADToken is ERC20, Module {
 
     /// @notice Initializes the contract.
     constructor(
-        Kernel kernel_
-    ) ERC20("Radiance Token", "RAD") Module(kernel_) {}
+        address kernel_ // Why isn't this a Kernel for deploy?
+    ) ERC20("Radiance Token", "RAD") Module(Kernel(kernel_)) {}
 
     /// @inheritdoc Module
     function KEYCODE() public pure override returns (Keycode) {
