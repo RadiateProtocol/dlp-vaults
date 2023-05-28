@@ -9,6 +9,7 @@ import {RolesAdmin} from "src/policies/RolesAdmin.sol";
 import {ERC20} from "@solmate/tokens/ERC20.sol";
 import {StakeChef} from "src/policies/StakeChef.sol";
 import {DLPVault} from "src/policies/DLPVault.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {MockDLPVault} from "./mocks/MockDLPVault.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
@@ -57,7 +58,7 @@ contract StakeChefTest is Test {
         kernel.executeAction(Actions.ActivatePolicy, address(rolesAdmin));
         WETH = new MockERC20("Wrapped Ether", "WETH", 18);
         dlpVault = new MockDLPVault(WETH);
-        stakeChef = new StakeChef(DLPVault(address(dlpVault)), WETH, kernel);
+        stakeChef = new StakeChef(DLPVault(address(dlpVault)), IERC20(address(WETH)), kernel);
         kernel.executeAction(Actions.ActivatePolicy, address(stakeChef));
 
         bytes32 adminrole = "admin";

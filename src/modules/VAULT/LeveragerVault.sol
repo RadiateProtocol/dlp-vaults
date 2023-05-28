@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.15;
-import "src/kernel.sol";
+import {Kernel, Module, Keycode, toKeycode} from "src/kernel.sol";
 import {ERC4626} from "solmate/mixins/ERC4626.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
@@ -18,7 +18,7 @@ contract LeveragerVault is VAULTv1 {
             string(abi.encodePacked("Radiate ", asset.name())),
             string(abi.encodePacked("RD-", asset.symbol()))
         )
-        Module(kernel_)
+        Module(Kernel(kernel_))
     {}
 
     function VERSION()
