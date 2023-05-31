@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 
 pragma solidity 0.8.15;
+
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "src/kernel.sol";
+import "src/Kernel.sol";
 
 /// @title RADToken
 /// @notice RADToken is a contract for the RAD token.
@@ -13,8 +14,8 @@ contract RADToken is ERC20, Module {
 
     /// @notice Initializes the contract.
     constructor(
-        address kernel_ // Why isn't this a Kernel for deploy?
-    ) ERC20("Radiance Token", "RAD") Module(Kernel(kernel_)) {}
+        Kernel kernel_ // Why isn't this a Kernel for deploy?
+    ) Module(kernel_) ERC20("Radiance Token", "RAD") {}
 
     /// @inheritdoc Module
     function KEYCODE() public pure override returns (Keycode) {
@@ -22,12 +23,7 @@ contract RADToken is ERC20, Module {
     }
 
     /// @inheritdoc Module
-    function VERSION()
-        external
-        pure
-        override
-        returns (uint8 major, uint8 minor)
-    {
+    function VERSION() external pure override returns (uint8 major, uint8 minor) {
         major = 1;
         minor = 0;
     }
