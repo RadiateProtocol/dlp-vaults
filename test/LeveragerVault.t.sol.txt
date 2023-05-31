@@ -5,12 +5,12 @@ import "forge-std/Test.sol";
 import {RADToken} from "src/modules/TOKEN/RADToken.sol";
 import {Treasury} from "src/modules/TRSRY/TRSRY.sol";
 import {LeveragerVault} from "src/modules/VAULT/LeveragerVault.sol";
-import {OlympusRoles} from "src/modules/ROLES/OlympusRoles.sol";
+// import {OlympusRoles} from "src/modules/ROLES/OlympusRoles.sol";
 import {RolesAdmin} from "src/policies/RolesAdmin.sol";
 import {ERC20} from "@solmate/tokens/ERC20.sol";
 import {StakeChef} from "src/policies/StakeChef.sol";
 import {DLPVault} from "src/policies/DLPVault.sol";
-import {Leverager} from "src/policies/Leverager.sol";
+// import {Leverager} from "src/policies/Leverager.sol";
 
 import {MockDLPVault} from "./mocks/MockDLPVault.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
@@ -23,13 +23,12 @@ contract LVGVTtest is Test {
     DLPVault public dlpVault;
     Treasury public treasury;
     Kernel public kernel;
-    OlympusRoles public roles;
+    // OlympusRoles public roles;
     RolesAdmin public rolesAdmin;
     MockERC20 public DLP;
     MockERC20 public WETH;
     uint256 public interestRate;
     LeveragerVault public leveragerVault;
-    Leverager public leveragerUSDC;
     UserFactory public userCreator;
     address public dlpWhale = 0x1119C4ce8F56d96a51b5A38260Fede037C7126F5;
     address public alice;
@@ -64,9 +63,8 @@ contract LVGVTtest is Test {
 
         // kernel.executeAction(Actions.ActivatePolicy, address(dlpVault));
     }
+
     function test_default() public {
         assertTrue(true);
     }
-
-
 }

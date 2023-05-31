@@ -47,7 +47,7 @@ contract StakeChefTest is Test {
         admin = users[3];
 
         kernel = new Kernel();
-        token = new RADToken(address(kernel));
+        token = new RADToken(kernel);
         treasury = new Treasury(kernel);
         roles = new OlympusRoles(kernel);
         kernel.executeAction(Actions.InstallModule, address(roles));
@@ -124,7 +124,5 @@ contract StakeChefTest is Test {
         dlpVault.approve(address(stakeChef), amount);
         stakeChef.deposit(amount);
         // fix rewards logic
-
     }
 }
-
