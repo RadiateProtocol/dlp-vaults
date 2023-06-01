@@ -3,33 +3,40 @@ pragma solidity ^0.8.15;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import {RolesConsumer} from "src/modules/ROLES/OlympusRoles.sol";
+import {RolesConsumer, ROLESv1} from "src/modules/ROLES/OlympusRoles.sol";
 import {RADToken} from "src/modules/TOKEN/RADToken.sol";
 import {DLPVault} from "./DLPVault.sol";
+// import "forge-std/console2.sol";
+
 import "src/Kernel.sol";
 
 contract StakeChef is Policy, RolesConsumer {
     // =========  EVENTS ========= //
 
     event Deposit(address indexed _user, uint256 _amount);
-    event Withdraw(address indexed _user, uint256 _amount, uint256 _reward);
+    event Withdraw(address indexed _user, uint256 _amount);
+    event RewardClaimed(address indexed _user, uint256 _amount);
 
     // =========  ERRORS ========= //
 
     error WithdrawTooMuch(address _user, uint256 _amount);
+    error InvalidInterestRate(uint256 _interestPerBlock);
+    error InvalidEndBlock(uint256 _endBlock);
+    error InvalidRewardPerBlock(uint256 _rewardPerBlock);
 
     // =========  STATE  ========= //
+    RADToken public TOKEN;
+    address public TRSRY;
     DLPVault public immutable dlptoken;
-    RADToken public immutable TOKEN;
     IERC20 public immutable weth;
-    uint256 public constant SCALAR = 1e12;
+    uint256 public constant SCALAR = 1e7; // Scalar is 1e7 since blocktimes on arbi are so quick, approx 266k blocks per day
     uint256 public rewardPerBlock;
     uint256 public interestPerBlock;
     uint256 public endBlock;
     uint256 public lastRewardBlock;
-    uint256 public accRewardPerShare;
-    uint256 public accDiscountPerShare;
-    uint256 public totalUserAssets;
+    uint256 public accRewardPerShare; // Initialized at 0, increases over time
+    uint256 public accDiscountPerShare; // Initialized at 0, increases over time
+    uint256 public totalUserAssets; // Will always be slightly inflated
 
     mapping(address => UserInfo) public userInfo;
 
@@ -42,6 +49,7 @@ contract StakeChef is Policy, RolesConsumer {
     constructor(DLPVault _token, IERC20 _weth, Kernel _kernel) Policy(_kernel) {
         dlptoken = _token;
         weth = _weth;
+        lastRewardBlock = block.timestamp;
     }
 
     //============================================================================================//
@@ -77,27 +85,36 @@ contract StakeChef is Policy, RolesConsumer {
     //                                     ADMIN                                                  //
     //============================================================================================//
 
-    function updateEndBlock(
-        uint256 _endBlock
-    ) public requirePermission("admin") {
+    function updateEndBlock(uint256 _endBlock) public onlyRole("admin") {
+        if (_endBlock <= block.timestamp) {
+            revert InvalidEndBlock(_endBlock);
+        }
         endBlock = _endBlock;
     }
 
     function updateRewardPerBlock(
         uint256 _rewardPerBlock
-    ) public requirePermission("admin") {
+    ) public onlyRole("admin") {
+        if (_rewardPerBlock >= SCALAR) {
+            revert InvalidRewardPerBlock(_rewardPerBlock);
+        }
         rewardPerBlock = _rewardPerBlock;
     }
 
     function updateInterestPerBlock(
         uint256 _interestPerBlock
-    ) public requirePermission("admin") {
+    ) public onlyRole("admin") {
+        if (_interestPerBlock >= SCALAR) {
+            revert InvalidInterestRate(_interestPerBlock);
+        }
         interestPerBlock = _interestPerBlock;
     }
 
-    function withdrawPOL(uint256 amount) external requirePermission("admin") {
-        if (dlptoken.balanceOf(address(this)) > totalUserAssets + amount) {
+    function withdrawPOL(uint256 amount) external onlyRole("admin") {
+        if (dlptoken.balanceOf(address(this)) >= totalUserAssets + amount) {
             dlptoken.transfer(TRSRY, amount);
+        } else {
+            revert WithdrawTooMuch(address(this), amount);
         }
     }
 
@@ -111,37 +128,32 @@ contract StakeChef is Policy, RolesConsumer {
     //                                     STAKING                                                //
     //============================================================================================//
     function updatePool() public {
-        if (block.number <= lastRewardBlock) {
-            return;
-        }
-        uint256 tokenSupply = dlptoken.balanceOf(address(this));
-        if (tokenSupply == 0) {
-            lastRewardBlock = block.number;
+        if (block.timestamp == lastRewardBlock || totalUserAssets == 0) {
             return;
         }
 
-        // claim rewards or other logic here
-        dlptoken.claimRewards();
-        // transfer to treasury
-        weth.transfer(TRSRY, weth.balanceOf(address(this)));
-        // add new minting logic here
-        uint256 multiplier = block.number - lastRewardBlock;
+        dlptoken.getReward();
+        uint256 _wethBalance = weth.balanceOf(address(this));
+        if (_wethBalance > 0) {
+            weth.transfer(TRSRY, _wethBalance);
+        }
+        uint256 lastBlock = (block.timestamp < endBlock)
+            ? block.timestamp
+            : endBlock;
+        uint256 multiplier = lastBlock - lastRewardBlock;
         uint256 reward = multiplier * rewardPerBlock;
-        accRewardPerShare += (reward * SCALAR) / tokenSupply;
+        accRewardPerShare += reward / totalUserAssets;
         accDiscountPerShare += multiplier * interestPerBlock; // Fixed rate
-        lastRewardBlock = block.number;
+        lastRewardBlock = lastBlock;
     }
 
     function deposit(uint256 _amount) public {
         UserInfo storage user = userInfo[msg.sender];
         updatePool();
         if (user.amount > 0) {
-            uint256 pending = (user.amount * accRewardPerShare) /
-                SCALAR -
-                user.rewardDebt;
-            _mint(msg.sender, pending);
+            _claimRewards(msg.sender);
         }
-        token.transferFrom(msg.sender, address(this), _amount);
+        dlptoken.transferFrom(msg.sender, address(this), _amount);
         user.amount += _amount;
         user.rewardDebt = (user.amount * accRewardPerShare) / SCALAR;
         user.interestDebt = (user.amount * accDiscountPerShare) / SCALAR;
@@ -151,80 +163,97 @@ contract StakeChef is Policy, RolesConsumer {
 
     function withdraw(uint256 _amount) public {
         UserInfo storage user = userInfo[msg.sender];
-        if (user.amount >= _amount) WithdrawTooMuch(msg.sender, _amount);
         updatePool();
         uint256 _accDiscountPerShare = accDiscountPerShare; // Save sloads
-        uint256 _accRewardPerShare = accRewardPerShare; // Save sloads
-        uint256 netInterest = (user.amount * _accDiscountPerShare) /
-            SCALAR -
-            user.interestDebt;
-        if (netInterest >= user.amount) {
-            // Accrued interest is greater than principal – only withdraw rewards
-            _amount = 0;
+        // initial userinterest debt is debt that user DOESN't OWE
+        uint256 _currentDebt = (user.amount * _accDiscountPerShare) / SCALAR;
+        if (user.amount + user.interestDebt < _currentDebt) {
             totalUserAssets -= user.amount;
-            // User can still accrue rewards if their position is underwater and they never claim
-            // 10% "liquidation penalty" for underwater positions
-            uint256 _pending = ((user.amount) * _accRewardPerShare) /
-                (21 * 1e11) -
-                user.rewardDebt;
-            if (_pending > 0) {
-                _mint(msg.sender, _pending);
-            }
-
-            delete userInfo[msg.sender];
-            emit Withdraw(msg.sender, 0, _pending);
-            return;
+            user.amount = 0;
+        } else if (user.amount + user.interestDebt < _currentDebt + _amount) {
+            revert WithdrawTooMuch(msg.sender, _amount);
         } else {
-            uint256 interest = user.amount - netInterest;
-            user.interestDebt -= interest;
-            // If amount > interest, currently accrued interest is wiped, otherwise subtract amount
-            user.interestDebt -= (_amount > interest)
-                ? interest - _amount
-                : interest;
-            _amount = (_amount > interest) ? _amount - interest : 0;
+            totalUserAssets -= (_amount + _currentDebt); // todo check this
+            user.amount =
+                (user.interestDebt + user.amount) -
+                (_amount + _currentDebt);
         }
-        // Get midpoint of initial and net principal - assume constant reward rate
-        uint256 pending = ((user.amount * 2 - netInterest) *
-            _accRewardPerShare) /
-            (2 * SCALAR) -
-            user.rewardDebt;
-        if (pending > 0) {
-            _mint(msg.sender, pending);
+        if (_amount != 0) {
+            claimRewards(msg.sender);
         }
-        user.amount -= _amount;
-        user.interestDebt = (user.amount * _accDiscountPerShare) / SCALAR;
-        user.rewardDebt = (user.amount * _accRewardPerShare) / SCALAR;
-        totalUserAssets -= _amount;
-        dlptoken.transfer(msg.sender, _amount);
-        emit Withdraw(msg.sender, _amount, pending);
+        emit Withdraw(msg.sender, _amount);
+    }
+
+    function claimRewards(address _user) public returns (uint256) {
+        withdraw(0); // Eject user if their principal is all bonded
+        return _claimRewards(_user);
+    }
+
+    function _claimRewards(address _user) internal returns (uint256) {
+        uint256 _rewards = rewardsBalanceOf(_user);
+        if (_rewards > 0) {
+            _mint(_user, _rewards);
+            UserInfo storage user = userInfo[_user];
+            user.rewardDebt += _rewards;
+        }
+        emit RewardClaimed(_user, _rewards);
+        return _rewards;
     }
 
     //============================================================================================//
     //                                     VIEW                                                   //
     //============================================================================================//
 
-    function pendingReward(address _user) external view returns (uint256) {
-        UserInfo storage user = userInfo[_user];
+    function rewardsBalanceOf(
+        address _user
+    ) public view returns (uint256 _netRewards) {
+        UserInfo memory user = userInfo[_user];
         uint256 _accRewardPerShare = accRewardPerShare;
-        uint256 lpSupply = token.balanceOf(address(this));
-        if (block.number > lastRewardBlock && lpSupply != 0) {
-            uint256 multiplier = block.number - lastRewardBlock;
-            uint256 reward = multiplier * rewardPerBlock;
-            _accRewardPerShare += (reward * SCALAR) / lpSupply;
+        uint256 _accDiscountPerShare = accDiscountPerShare;
+        uint256 lastBlock = (block.timestamp < endBlock)
+            ? block.timestamp
+            : endBlock;
+        if (lastBlock > lastRewardBlock && totalUserAssets != 0) {
+            uint256 multiplier = lastBlock - lastRewardBlock;
+            uint256 reward = (multiplier * rewardPerBlock);
+            _accRewardPerShare += reward / totalUserAssets;
+
+            // update accDiscountPerShare
+            _accDiscountPerShare += multiplier * interestPerBlock;
         }
-        return (user.amount * _accRewardPerShare) / SCALAR - user.rewardDebt;
+
+        uint256 _currentAmount = user.amount + user.interestDebt;
+        uint256 _interest = (user.amount * _accDiscountPerShare) / SCALAR;
+        uint256 _netOutput = (_currentAmount > _interest)
+            ? _currentAmount - _interest
+            : 0;
+
+        uint256 _avgRewards = ((_currentAmount + _netOutput) *
+            _accRewardPerShare) / 2;
+
+        _netRewards = (user.rewardDebt < _avgRewards)
+            ? _avgRewards - user.rewardDebt
+            : 0;
     }
 
-    function pendingInterest(address _user) external view returns (uint256) {
-        UserInfo storage user = userInfo[_user];
+    function balanceOf(address _user) public view returns (uint256) {
+        UserInfo memory user = userInfo[_user];
         uint256 _accDiscountPerShare = accDiscountPerShare;
-        uint256 lpSupply = token.balanceOf(address(this));
-        if (block.number > lastRewardBlock && lpSupply != 0) {
+        // If endBlock has already passed
+        uint256 lastBlock = (block.timestamp < endBlock)
+            ? block.timestamp
+            : endBlock;
+        if (lastBlock > lastRewardBlock && totalUserAssets != 0) {
             _accDiscountPerShare +=
-                (lastRewardBlock - block.number) *
+                (lastBlock - lastRewardBlock) *
                 interestPerBlock;
         }
-        return
-            (user.amount * _accDiscountPerShare) / SCALAR - user.interestDebt;
+        uint256 _currentAmount = user.amount + user.interestDebt;
+        uint256 _interest = (user.amount * _accDiscountPerShare) / SCALAR;
+        if (_currentAmount > _interest) {
+            return _currentAmount - _interest;
+        } else {
+            return 0;
+        }
     }
 }
