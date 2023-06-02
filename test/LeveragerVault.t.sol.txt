@@ -50,18 +50,6 @@ contract LVGVTtest is Test {
         // roles = new OlympusRoles(kernel);
         DLP = new MockERC20("Dynamic Liquity Prov", "DLP", 18);
         leveragerVault = new LeveragerVault(kernel, DLP);
-
-        // // kernel.executeAction(Actions.InstallModule, address(leveragerVault));
-        // kernel.executeAction(Actions.InstallModule, address(roles));
-        // kernel.executeAction(Actions.InstallModule, address(treasury));
-
-        // rolesAdmin = new RolesAdmin(kernel);
-
-        // kernel.executeAction(Actions.ActivatePolicy, address(rolesAdmin));
-
-        // WETH = new MockERC20("Wrapped Ether", "WETH", 18);
-
-        // kernel.executeAction(Actions.ActivatePolicy, address(dlpVault));
     }
 
     function test_default() public {
