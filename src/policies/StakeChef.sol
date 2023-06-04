@@ -29,11 +29,11 @@ contract StakeChef is Policy, RolesConsumer {
     address public TRSRY;
     DLPVault public immutable dlptoken;
     IERC20 public immutable weth;
-    uint256 public constant SCALAR = 1e7; // Scalar is 1e7 since blocktimes on arbi are so quick, approx 266k blocks per day
+    uint256 public constant SCALAR = 1e6;
     uint256 public rewardPerBlock;
     uint256 public interestPerBlock;
-    uint256 public endBlock;
-    uint256 public lastRewardBlock;
+    uint256 public endBlock; // End block timestamp
+    uint256 public lastRewardBlock; // End block timestamp
     uint256 public accRewardPerShare; // Initialized at 0, increases over time
     uint256 public accDiscountPerShare; // Initialized at 0, increases over time
     uint256 public totalUserAssets; // Will always be slightly inflated
