@@ -6,7 +6,6 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import {RolesConsumer, ROLESv1} from "src/modules/ROLES/OlympusRoles.sol";
 import {RADToken} from "src/modules/TOKEN/RADToken.sol";
 import {DLPVault} from "./DLPVault.sol";
-// import "forge-std/console2.sol";
 
 import "src/Kernel.sol";
 

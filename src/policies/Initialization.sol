@@ -23,15 +23,12 @@ contract Initialization is Policy {
 
     function requestPermissions()
         external
-        view
+        pure
         override
         returns (Permissions[] memory requests)
     {
-        Permissions[] memory permissions = new Permissions[](1);
-        permissions[0] = Permissions(
-            toKeycode("TOKEN"),
-            RADToken.mint.selector
-        );
+        requests = new Permissions[](1);
+        requests[0] = Permissions(toKeycode("TOKEN"), RADToken.mint.selector);
     }
 
     function mint(address _to, uint256 _amount) external {
