@@ -10,6 +10,8 @@ import {ERC20} from "@solmate/tokens/ERC20.sol";
 contract MigratorZap is IFlashLoanSimpleReceiver, Ownable {
     // =========  EVENTS ========= //
 
+    event Migrate(address indexed user, uint256 amount, address indexed asset);
+
     // =========  ERRORS ========= //
 
     error Migrator_ONLY_AAVE_LENDING_POOL(address sender);
@@ -43,6 +45,7 @@ contract MigratorZap is IFlashLoanSimpleReceiver, Ownable {
         require(success, "Migrator: Flashloan failed");
         Leverager leverager = leveragers[asset];
         leverager.deposit(ERC20(_asset).balanceOf(address(this)), msg.sender);
+        emit Migrate(msg.sender, _amount, _asset);
     }
 
     function executeOperation(
