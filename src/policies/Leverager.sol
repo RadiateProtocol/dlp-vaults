@@ -54,9 +54,11 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
 
     address public constant RDNT = 0x3082CC23568eA640225c2467653dB90e9250AaA0;
 
-    ERC20 public constant DLP = ERC20(0x32dF62dc3aEd2cD6224193052Ce665DC18165841);
+    ERC20 public constant DLP =
+        ERC20(0x32dF62dc3aEd2cD6224193052Ce665DC18165841);
 
-    IAaveOracle public constant aaveOracle = IAaveOracle(0xFf785dE8a851048a65CbE92C84d4167eF3Ce9BAC);
+    IAaveOracle public constant aaveOracle =
+        IAaveOracle(0xFf785dE8a851048a65CbE92C84d4167eF3Ce9BAC);
 
     uint256 public constant RATIO_DIVISOR = 10000;
 
@@ -65,18 +67,22 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     uint256 public immutable minAmountToInvest;
 
     /// @notice Aave lending pool address (for flashloans)
-    IPool public constant aaveLendingPool = IPool(0x794a61358D6845594F94dc1DB02A252b5b4814aD);
+    IPool public constant aaveLendingPool =
+        IPool(0x794a61358D6845594F94dc1DB02A252b5b4814aD);
 
     /// @notice Lending Pool address
-    ILendingPool public constant lendingPool = ILendingPool(0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1);
+    ILendingPool public constant lendingPool =
+        ILendingPool(0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1);
 
     /// @notice Sushiswap router address
-    IUniswapV2Router01 public uniswapRouter = IUniswapV2Router01(0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506);
+    IUniswapV2Router01 public uniswapRouter =
+        IUniswapV2Router01(0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506);
 
     IEligibilityDataProvider public eligibilityDataProvider =
         IEligibilityDataProvider(0xd4966DC49a10aa5467D65f4fA4b1449b5d874399);
 
-    IMultiFeeDistribution public mfd = IMultiFeeDistribution(0x76ba3eC5f5adBf1C58c91e86502232317EeA72dE);
+    IMultiFeeDistribution public mfd =
+        IMultiFeeDistribution(0x76ba3eC5f5adBf1C58c91e86502232317EeA72dE);
 
     DLPVault public DLPvault;
 
@@ -89,7 +95,10 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         ERC20 _asset,
         Kernel _kernel
     ) Policy(_kernel) {
-        require(_minAmountToInvest > 0, "Leverager: minAmountToInvest must be greater than 0");
+        require(
+            _minAmountToInvest > 0,
+            "Leverager: minAmountToInvest must be greater than 0"
+        );
         minAmountToInvest = _minAmountToInvest;
         vaultCap = _vaultCap;
         loopCount = _loopCount;
@@ -102,7 +111,11 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     //                                     DEFAULT OVERRIDES                                      //
     //============================================================================================//
 
-    function configureDependencies() external override returns (Keycode[] memory dependencies) {
+    function configureDependencies()
+        external
+        override
+        returns (Keycode[] memory dependencies)
+    {
         dependencies = new Keycode[](3);
         dependencies[0] = toKeycode("ROLES");
         dependencies[1] = toKeycode("LVGVT");
@@ -112,7 +125,12 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         TRSRY = getModuleAddress(dependencies[2]);
     }
 
-    function requestPermissions() external view override returns (Permissions[] memory requests) {
+    function requestPermissions()
+        external
+        view
+        override
+        returns (Permissions[] memory requests)
+    {
         Keycode VAULT_KEYCODE = toKeycode("LVGVT");
 
         requests = new Permissions[](6);
@@ -151,19 +169,25 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     }
 
     /// @dev Change borrow ratio for any new deposits
-    function changeBorrowRatio(uint256 _borrowRatio) external onlyRole("admin") {
+    function changeBorrowRatio(
+        uint256 _borrowRatio
+    ) external onlyRole("admin") {
         borrowRatio = _borrowRatio;
         emit BorrowRatioChanged(_borrowRatio);
     }
 
     /// @dev Change DLP health factor
-    function changeDLPHealthFactor(uint256 _healthfactor) external onlyRole("admin") {
+    function changeDLPHealthFactor(
+        uint256 _healthfactor
+    ) external onlyRole("admin") {
         healthFactor = _healthfactor;
         emit DLPHealthFactorChanged(_healthfactor);
     }
 
     /// @dev Set default lock index
-    function setDefaultRelockIndex(uint256 _defaultLockIndex) external onlyRole("admin") {
+    function setDefaultRelockIndex(
+        uint256 _defaultLockIndex
+    ) external onlyRole("admin") {
         mfd.setDefaultRelockTypeIndex(_defaultLockIndex);
         emit DefaultRelockIndexChanged(_defaultLockIndex);
     }
@@ -197,7 +221,9 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
      * @return The configuration of the reserve
      *
      */
-    function getConfiguration(address asset_) public view returns (DataTypes.ReserveConfigurationMap memory) {
+    function getConfiguration(
+        address asset_
+    ) public view returns (DataTypes.ReserveConfigurationMap memory) {
         return lendingPool.getConfiguration(asset_);
     }
 
@@ -208,7 +234,9 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
      *
      */
     function getVDebtToken(address asset_) public view returns (address) {
-        DataTypes.ReserveData memory reserveData = lendingPool.getReserveData(asset_);
+        DataTypes.ReserveData memory reserveData = lendingPool.getReserveData(
+            asset_
+        );
         return reserveData.variableDebtTokenAddress;
     }
 
@@ -219,7 +247,8 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
      *
      */
     function ltv(address asset_) public view returns (uint256) {
-        DataTypes.ReserveConfigurationMap memory conf = lendingPool.getConfiguration(asset_);
+        DataTypes.ReserveConfigurationMap memory conf = lendingPool
+            .getConfiguration(asset_);
         return conf.data % (2 ** 16);
     }
 
@@ -228,7 +257,8 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
      *
      */
     function _loop() internal {
-        if (borrowRatio >= RATIO_DIVISOR) revert Leverager_ERROR_BORROW_RATIO(borrowRatio);
+        if (borrowRatio <= RATIO_DIVISOR)
+            revert Leverager_ERROR_BORROW_RATIO(borrowRatio);
 
         uint16 referralCode = 0;
         uint256 amount = asset.balanceOf(address(this));
@@ -241,9 +271,20 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         }
         for (uint256 i = 0; i < loopCount; i += 1) {
             amount = (amount * borrowRatio) / RATIO_DIVISOR;
-            lendingPool.borrow(address(asset), amount, interestRateMode, referralCode, address(this));
+            lendingPool.borrow(
+                address(asset),
+                amount,
+                interestRateMode,
+                referralCode,
+                address(this)
+            );
 
-            lendingPool.deposit(address(asset), amount, address(this), referralCode);
+            lendingPool.deposit(
+                address(asset),
+                amount,
+                address(this),
+                referralCode
+            );
         }
         uint256 requiredAmount = DLPToZapEstimation(amount);
 
@@ -265,11 +306,15 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
      *
      */
     function DLPToZapEstimation(uint256 amount) public view returns (uint256) {
-        uint256 required = eligibilityDataProvider.requiredUsdValue(address(this));
+        uint256 required = eligibilityDataProvider.requiredUsdValue(
+            address(this)
+        );
         uint256 locked = eligibilityDataProvider.lockedUsdValue(address(this));
 
         // Add health factor amount to required
-        required = ((required + requiredLocked(amount)) * healthFactor) / RATIO_DIVISOR;
+        required =
+            ((required + requiredLocked(amount)) * healthFactor) /
+            RATIO_DIVISOR;
 
         for (uint256 i = 0; i < loopCount; i += 1) {
             amount = (amount * borrowRatio) / RATIO_DIVISOR;
@@ -282,9 +327,12 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
             // Transform USD to DLP price
             uint256 deltaUsdValue = required - locked; //decimals === 8
             uint256 wethPrice = aaveOracle.getAssetPrice(address(WETH));
-            uint8 priceDecimal = IChainlinkAggregator(aaveOracle.getSourceOfAsset(WETH)).decimals();
-            uint256 deltaDLPvalue =
-                (deltaUsdValue * ((DLPPrice() * wethPrice) / 10 ** priceDecimal)) * 10 ** (18 - 2 * priceDecimal);
+            uint8 priceDecimal = IChainlinkAggregator(
+                aaveOracle.getSourceOfAsset(WETH)
+            ).decimals();
+            uint256 deltaDLPvalue = (deltaUsdValue *
+                ((DLPPrice() * wethPrice) / 10 ** priceDecimal)) *
+                10 ** (18 - 2 * priceDecimal);
             // 10e8 + 10e8 + 10e8 - 10e8 + 10e2 = 10e18
             return deltaDLPvalue;
         }
@@ -298,9 +346,9 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     function requiredLocked(uint256 _amount) internal view returns (uint256) {
         uint256 assetPrice = aaveOracle.getAssetPrice(address(asset));
         uint8 assetDecimal = asset.decimals();
-        uint256 requiredVal = (
-            ((assetPrice * _amount) / (10 ** assetDecimal)) * eligibilityDataProvider.requiredDepositRatio()
-        ) / eligibilityDataProvider.RATIO_DIVISOR();
+        uint256 requiredVal = (((assetPrice * _amount) / (10 ** assetDecimal)) *
+            eligibilityDataProvider.requiredDepositRatio()) /
+            eligibilityDataProvider.RATIO_DIVISOR();
 
         return requiredVal;
     }
@@ -311,21 +359,31 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
      */
     function _unloop(uint256 _amount) internal {
         bytes memory params = "";
-        aaveLendingPool.flashLoanSimple(address(this), address(asset), _amount, params, 0);
+        aaveLendingPool.flashLoanSimple(
+            address(this),
+            address(asset),
+            _amount,
+            params,
+            0
+        );
         emit Unloop(_amount);
     }
 
     /**
      * @notice Flashloan callback for Aave
      */
-    function executeOperation(address, uint256 amount, uint256, address initiator, bytes calldata)
-        external
-        returns (bool success)
-    {
+    function executeOperation(
+        address,
+        uint256 amount,
+        uint256,
+        address initiator,
+        bytes calldata
+    ) external returns (bool success) {
         if (msg.sender != address(aaveLendingPool)) {
             revert Leverager_ONLY_AAVE_LENDING_POOL(msg.sender);
         }
-        if (initiator != address(this)) revert Leverager_ONLY_SELF_INIT(initiator);
+        if (initiator != address(this))
+            revert Leverager_ONLY_SELF_INIT(initiator);
         // Repay approval
         if (asset.allowance(address(this), address(aaveLendingPool)) == 0) {
             asset.safeApprove(address(aaveLendingPool), type(uint256).max);
@@ -370,7 +428,11 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
             if (token == address(asset)) {
                 assetAmount += amount;
             } else {
-                uint256 assetAmountOut = _estimateAssetTokensOut(token, address(asset), amount);
+                uint256 assetAmountOut = _estimateAssetTokensOut(
+                    token,
+                    address(asset),
+                    amount
+                );
                 assetAmount += assetAmountOut;
                 ERC20(token).safeApprove(address(uniswapRouter), amount);
                 path[0] = token;
@@ -402,14 +464,14 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     }
 
     /// @dev Return estimated amount of Asset tokens to receive for given amount of tokens
-    function _estimateAssetTokensOut(address _in, address _out, uint256 _amtIn)
-        internal
-        view
-        returns (uint256 tokensOut)
-    {
+    function _estimateAssetTokensOut(
+        address _in,
+        address _out,
+        uint256 _amtIn
+    ) internal view returns (uint256 tokensOut) {
         uint256 priceInAsset;
         if (RDNT == _in) {
-            (, int256 answer,,,) = chainlink.latestRoundData(); // 8 decimals
+            (, int256 answer, , , ) = chainlink.latestRoundData(); // 8 decimals
             priceInAsset = uint256(answer);
         } else {
             priceInAsset = aaveOracle.getAssetPrice(_in); //USDC: 100000000
@@ -418,7 +480,9 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         uint256 priceOutAsset = aaveOracle.getAssetPrice(_out); //WETH: 153359950000
         uint256 decimalsIn = ERC20(_in).decimals();
         uint256 decimalsOut = ERC20(_out).decimals();
-        tokensOut = (_amtIn * priceInAsset * (10 ** decimalsOut)) / (priceOutAsset * (10 ** decimalsIn));
+        tokensOut =
+            (_amtIn * priceInAsset * (10 ** decimalsOut)) /
+            (priceOutAsset * (10 ** decimalsIn));
     }
 
     //============================================================================================//
@@ -429,16 +493,18 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     uint256 public DLPBorrowed;
 
     /// @notice Chainlink oracle address for RDNT/USD
-    AggregatorV3Interface public chainlink = AggregatorV3Interface(0x20d0Fcab0ECFD078B036b6CAf1FaC69A6453b352);
+    AggregatorV3Interface public chainlink =
+        AggregatorV3Interface(0x20d0Fcab0ECFD078B036b6CAf1FaC69A6453b352);
 
     /**
      * @notice Return DLP (80-20 LP) price in ETH scaled by 1e8
      *
      */
     function DLPPrice() public view returns (uint256) {
-        (, int256 answer,,,) = chainlink.latestRoundData(); // 8 decimals
+        (, int256 answer, , , ) = chainlink.latestRoundData(); // 8 decimals
         // RDNT Price (USD, 8 decimals) * ETH Price (USD, 8 decimals)/1e12 = RDNT Price (ETH, 8 decimals)
-        uint256 radiantEthPrice = (uint256(answer) * aaveOracle.getAssetPrice(WETH)) / 10e8;
+        uint256 radiantEthPrice = (uint256(answer) *
+            aaveOracle.getAssetPrice(WETH)) / 10e8;
         // Transform by 80:20 ratio
         return (10e8 * 20 + radiantEthPrice * 80) / 100;
     }
@@ -471,7 +537,9 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
                 DLPBorrowed += _dlpBorrowed;
             }
 
-            if (DLP.allowance(address(this), address(DLPvault)) < requiredAmount) {
+            if (
+                DLP.allowance(address(this), address(DLPvault)) < requiredAmount
+            ) {
                 DLP.safeApprove(address(DLPvault), type(uint256).max);
             }
             bal_ = DLP.balanceOf(address(this));
@@ -485,12 +553,20 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
     //                               4626 LOGIC                                                   //
     //============================================================================================//
 
-    function withdraw(uint256 assets, address receiver, address owner) public returns (uint256) {
+    function withdraw(
+        uint256 assets,
+        address receiver,
+        address owner
+    ) public returns (uint256) {
         beforeWithdrawal(assets);
         return VAULT._withdraw(assets, receiver, owner, msg.sender);
     }
 
-    function redeem(uint256 shares, address receiver, address owner) public returns (uint256) {
+    function redeem(
+        uint256 shares,
+        address receiver,
+        address owner
+    ) public returns (uint256) {
         uint256 assets_ = VAULT.previewRedeem(shares);
         beforeWithdrawal(assets_);
         return VAULT._withdraw(assets_, receiver, owner, msg.sender);
@@ -505,7 +581,11 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
         return shares_;
     }
 
-    function mint(uint256 shares, address sender, address owner) public returns (uint256) {
+    function mint(
+        uint256 shares,
+        address sender,
+        address owner
+    ) public returns (uint256) {
         if (shares + VAULT.totalSupply() >= vaultCap) {
             revert Leverager_VAULT_CAP_REACHED();
         }
@@ -548,13 +628,24 @@ contract Leverager is IFlashLoanSimpleReceiver, RolesConsumer, Policy {
             // copy function selector and any arguments
             calldatacopy(0, 0, calldatasize())
             // execute function call using the facet
-            let result := delegatecall(gas(), vaultAddress, 0, calldatasize(), 0, 0)
+            let result := delegatecall(
+                gas(),
+                vaultAddress,
+                0,
+                calldatasize(),
+                0,
+                0
+            )
             // get any return value
             returndatacopy(0, 0, returndatasize())
             // return any return value or error back to the caller
             switch result
-            case 0 { revert(0, returndatasize()) }
-            default { return(0, returndatasize()) }
+            case 0 {
+                revert(0, returndatasize())
+            }
+            default {
+                return(0, returndatasize())
+            }
         }
     }
 
