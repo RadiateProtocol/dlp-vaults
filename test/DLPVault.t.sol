@@ -174,7 +174,6 @@ contract DLPVaultTest is Test {
 
         // Should trigger queue
         assertEq(dlpVault.withdrawalQueueIndex(), 3);
-        
     }
 
     function testFailRedeem() public {
@@ -204,5 +203,4 @@ contract DLPVaultTest is Test {
     // No safemath
     // Changed imports
     // No staking logic – logic handled by 4626 hooks
-    
 }

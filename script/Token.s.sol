@@ -33,20 +33,30 @@ contract TokenScript is Script {
         // Activate Policies
         RolesAdmin rolesAdmin = new RolesAdmin(kernel);
         console2.log("Roles Admin address: ", address(roles));
-        Initialization initialization = new Initialization(
-            kernel,
-            vm.addr(deployerPrivateKey)
-        );
+        Initialization initialization = new Initialization(kernel);
         console2.log("Initialization address: ", address(roles));
 
         kernel.executeAction(Actions.ActivatePolicy, address(rolesAdmin));
         kernel.executeAction(Actions.ActivatePolicy, address(initialization));
 
-        // deploy presale contracts
-        RADPresale presale = new RADPresale(multisig, IERC20(address(token)));
+        // deploy Private presale
+        RADPresale presale = new RADPresale(
+            multisig,
+            IERC20(address(token)),
+            7 days
+        );
+        initialization.mint(address(presale), 10000 * 1e18);
+
         console2.log("Presale address: ", address(presale));
 
+        // Deploy public presale later
+        initialization.mint(multisig, 45000 * 1e18); // Team tokens + public presale tokens + airdrop tokens
+
+        initialization.mint(address(treasury), 96000 * 1e18); // DAO treasury tokens
+
+        // Set up roles
+        roles.saveRole("admin", multisig);
+
         kernel.executeAction(Actions.ChangeExecutor, multisig);
-        // Set up vesting (later)
     }
 }

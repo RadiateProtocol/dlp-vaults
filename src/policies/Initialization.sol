@@ -7,8 +7,8 @@ contract Initialization is Policy {
     RADToken public token;
     address public immutable CONFIGURATOR;
 
-    constructor(Kernel _kernel, address _configurator) Policy(_kernel) {
-        CONFIGURATOR = _configurator;
+    constructor(Kernel _kernel) Policy(_kernel) {
+        CONFIGURATOR = msg.sender;
     }
 
     function configureDependencies()
@@ -27,12 +27,21 @@ contract Initialization is Policy {
         override
         returns (Permissions[] memory requests)
     {
-        requests = new Permissions[](1);
+        requests = new Permissions[](2);
         requests[0] = Permissions(toKeycode("TOKEN"), RADToken.mint.selector);
+        requests[1] = Permissions(
+            toKeycode("TOKEN"),
+            RADToken.setMaxSupply.selector
+        );
     }
 
     function mint(address _to, uint256 _amount) external {
         require(msg.sender == CONFIGURATOR, "Only configurator can mint");
         token.mint(_to, _amount);
+    }
+
+    function setMaxSupply() external {
+        require(msg.sender == CONFIGURATOR, "Only configurator can set max");
+        token.setMaxSupply(2e6 ether); // 200k supply
     }
 }
