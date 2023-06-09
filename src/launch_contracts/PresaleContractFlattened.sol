@@ -1934,12 +1934,12 @@ contract RADPresale is Ownable, ReentrancyGuard, AccessControl {
 
     address public treasury;
 
-    // How much 1 RAD costs in USDC
-    uint256 public rate = 10.5 * (10 ** 2);
+    // 1 RAD == 15 USDC
+    uint256 public rate = 15 * (10 ** 6);
 
-    uint256 public cap = 20000 * (10 ** 18);
+    uint256 public cap = 10000 * (10 ** 18);
     uint256 public sold = 0;
-    uint256 public userCap = 8000 * (10 ** 6);
+    uint256 public userCap = 10000 * (10 ** 6);
 
     struct UserInfo {
         uint256 claimable;
@@ -1953,6 +1953,8 @@ contract RADPresale is Ownable, ReentrancyGuard, AccessControl {
     uint256 public usdcRaised = 0;
 
     uint256 public releaseTime;
+
+    uint256 public vestDuration;
 
     bool public released = false;
 
@@ -1975,9 +1977,10 @@ contract RADPresale is Ownable, ReentrancyGuard, AccessControl {
     /**
      * @param _wallet Address where collected funds will be forwarded to
      */
-    constructor(address _wallet, IERC20 _rad) {
+    constructor(address _wallet, IERC20 _rad, uint256 _vestDuration) {
         wallet = _wallet;
         RAD = _rad;
+        vestDuration = _vestDuration;
     }
 
     // -----------------------------------------
@@ -2065,13 +2068,18 @@ contract RADPresale is Ownable, ReentrancyGuard, AccessControl {
         uint256 claiming;
 
         // calculate the total amount claimable
-        if (timePass >= 7 days || block.timestamp - releaseTime >= 7 days) {
+        if (
+            timePass >= vestDuration ||
+            block.timestamp - releaseTime >= vestDuration
+        ) {
             // claim all
             claiming =
                 userInfo[_beneficiary].claimable -
                 userInfo[_beneficiary].claimed;
         } else {
-            claiming = (userInfo[_beneficiary].claimable * timePass) / (7 days);
+            claiming =
+                (userInfo[_beneficiary].claimable * timePass) /
+                (vestDuration);
         }
 
         // update user claimed, deliver the tokens and emit event

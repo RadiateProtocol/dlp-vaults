@@ -22,8 +22,15 @@ contract RADToken is ERC20, Module {
         return toKeycode("TOKEN");
     }
 
+    uint256 public maxSupply;
+
     /// @inheritdoc Module
-    function VERSION() external pure override returns (uint8 major, uint8 minor) {
+    function VERSION()
+        external
+        pure
+        override
+        returns (uint8 major, uint8 minor)
+    {
         major = 1;
         minor = 0;
     }
@@ -33,6 +40,14 @@ contract RADToken is ERC20, Module {
     //============================================================================================//
 
     function mint(address _to, uint256 _amount) external permissioned {
+        require(
+            totalSupply() + _amount <= maxSupply,
+            "RADToken: max supply exceeded"
+        );
         _mint(_to, _amount);
+    }
+
+    function setMaxSupply(uint256 _amount) external permissioned {
+        maxSupply = _amount;
     }
 }
