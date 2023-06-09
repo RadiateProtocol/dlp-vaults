@@ -79,5 +79,6 @@ contract MigratorZap is IFlashLoanSimpleReceiver, Ownable {
 
         radiantLendingPool.repay(asset, amount, 2, msg.sender);
         radiantLendingPool.withdraw(asset, amount, msg.sender);
+        return true;
     }
 }
