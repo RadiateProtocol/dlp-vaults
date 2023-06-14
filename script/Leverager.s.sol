@@ -28,7 +28,7 @@ contract LeveragerScript is Script {
         Leverager daiLeverager = new Leverager(
             500e18,
             1000000e18,
-            6,
+            8,
             0.90 * 1e6,
             dlpVault,
             ERC20(dai),
