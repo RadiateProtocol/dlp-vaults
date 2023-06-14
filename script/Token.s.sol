@@ -9,6 +9,7 @@ import {OlympusRoles} from "src/modules/ROLES/OlympusRoles.sol";
 import {RADToken as Token} from "src/modules/TOKEN/RADToken.sol";
 import {Treasury} from "src/modules/TRSRY/TRSRY.sol";
 import {Initialization} from "src/policies/Initialization.sol";
+import {MockERC20} from "../test/mocks/MockERC20.sol";
 
 contract TokenScript is Script {
     function setUp() public {}
@@ -38,13 +39,16 @@ contract TokenScript is Script {
 
         kernel.executeAction(Actions.ActivatePolicy, address(rolesAdmin));
         kernel.executeAction(Actions.ActivatePolicy, address(initialization));
-
+        // Testnet
+        MockERC20 usdc = new MockERC20("usdc", "usdc", 6);
         // deploy Private presale
         RADPresale presale = new RADPresale(
             multisig,
             IERC20(address(token)),
+            IERC20(address(usdc)),
             7 days
         );
+        initialization.setMaxSupply();
         initialization.mint(address(presale), 10000 * 1e18);
 
         console2.log("Presale address: ", address(presale));
@@ -55,7 +59,7 @@ contract TokenScript is Script {
         initialization.mint(address(treasury), 96000 * 1e18); // DAO treasury tokens
 
         // Set up roles
-        roles.saveRole("admin", multisig);
+        rolesAdmin.grantRole("admin", multisig);
 
         kernel.executeAction(Actions.ChangeExecutor, multisig);
     }

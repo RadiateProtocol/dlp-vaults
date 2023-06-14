@@ -1927,8 +1927,9 @@ contract RADPresale is Ownable, ReentrancyGuard, AccessControl {
     // The token being sold
     IERC20 public RAD;
 
-    IERC20 public USDC = IERC20(0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8);
+    // IERC20 public USDC = IERC20(0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8);
 
+    IERC20 public USDC;
     // Address where funds are collected
     address public immutable wallet;
 
@@ -1977,10 +1978,16 @@ contract RADPresale is Ownable, ReentrancyGuard, AccessControl {
     /**
      * @param _wallet Address where collected funds will be forwarded to
      */
-    constructor(address _wallet, IERC20 _rad, uint256 _vestDuration) {
+    constructor(
+        address _wallet,
+        IERC20 _rad,
+        IERC20 _usdc,
+        uint256 _vestDuration
+    ) {
         wallet = _wallet;
         RAD = _rad;
         vestDuration = _vestDuration;
+        USDC = _usdc;
     }
 
     // -----------------------------------------

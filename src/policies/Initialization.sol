@@ -42,6 +42,6 @@ contract Initialization is Policy {
 
     function setMaxSupply() external {
         require(msg.sender == CONFIGURATOR, "Only configurator can set max");
-        token.setMaxSupply(2e6 ether); // 200k supply
+        token.setMaxSupply(2e6 * 1e18); // 200k supply
     }
 }
