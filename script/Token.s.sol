@@ -40,12 +40,12 @@ contract TokenScript is Script {
         kernel.executeAction(Actions.ActivatePolicy, address(rolesAdmin));
         kernel.executeAction(Actions.ActivatePolicy, address(initialization));
         // Testnet
-        MockERC20 usdc = new MockERC20("usdc", "usdc", 6);
+        // MockERC20 usdc = new MockERC20("usdc", "usdc", 6);
         // deploy Private presale
         RADPresale presale = new RADPresale(
             multisig,
             IERC20(address(token)),
-            IERC20(address(usdc)),
+            IERC20(0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8), // USDC.e on arbi
             7 days
         );
         initialization.setMaxSupply();

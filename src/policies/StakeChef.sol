@@ -71,13 +71,11 @@ contract StakeChef is Policy, RolesConsumer {
 
     function requestPermissions()
         external
-        view
+        pure
         override
         returns (Permissions[] memory requests)
     {
-        Keycode TOKEN_KEYCODE = toKeycode("TOKEN");
-        requests = new Permissions[](1);
-        requests[0] = Permissions(TOKEN_KEYCODE, TOKEN.mint.selector);
+        requests = new Permissions[](0);
     }
 
     //============================================================================================//
@@ -117,9 +115,10 @@ contract StakeChef is Policy, RolesConsumer {
         }
     }
 
-    function _mint(address to, uint256 amount) internal {
+    function _transfer(address to, uint256 amount) internal {
         if (amount > 0) {
-            TOKEN.mint(to, amount);
+            TOKEN.transfer(to, amount);
+            // Can update to mint as well
         }
     }
 
@@ -191,7 +190,7 @@ contract StakeChef is Policy, RolesConsumer {
     function _claimRewards(address _user) internal returns (uint256) {
         uint256 _rewards = rewardsBalanceOf(_user);
         if (_rewards > 0) {
-            _mint(_user, _rewards);
+            _transfer(_user, _rewards);
             UserInfo storage user = userInfo[_user];
             user.rewardDebt += _rewards;
         }
