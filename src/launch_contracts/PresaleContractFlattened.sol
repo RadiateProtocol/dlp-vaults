@@ -1938,9 +1938,9 @@ contract RADPresale is Ownable, ReentrancyGuard, AccessControl {
     // 1 RAD == 15 USDC
     uint256 public rate = 15 * (10 ** 2);
 
-    uint256 public cap = 10000 * (10 ** 18);
+    uint256 public cap = 200000 * (10 ** 18);
     uint256 public sold = 0;
-    uint256 public userCap = 10000 * (10 ** 6);
+    uint256 public userCap = 0;
 
     struct UserInfo {
         uint256 claimable;

@@ -19,7 +19,7 @@ contract LeveragerScript is Script {
         DLPVault dlpVault = new DLPVault(
             ERC20(dlp),
             ERC20(weth),
-            0.1 * 1e4,
+            0.1 * 1e4, // 10% interest rate
             kernel
         );
 
@@ -39,8 +39,8 @@ contract LeveragerScript is Script {
 
         console2.log("Dai Leverager address: ", address(daiLeverager));
 
-        // Do a small deposit to prevent 4626 inflation attacks
-        daiLeverager.deposit(1000e18, address(this));
+        // // Do a small deposit to prevent 4626 inflation attacks
+        // daiLeverager.deposit(1000e18, address(this));
 
         vm.stopBroadcast();
     }
