@@ -227,9 +227,12 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     function setDefaultRelockIndex(
         uint256 _defaultLockIndex
     ) external onlyRole("admin") {
-        mfd.setDefaultRelockTypeIndex(_defaultLockIndex);
+        mfd.setDefaultRelockTypeIndex(_defaultLockIndex); // 1 month
         emit DefaultRelockIndexChanged(_defaultLockIndex);
     }
+
+    // Protocol Owned liquidity (DLPvault tokens) -> normal DLP -> maxlock DLP into DLPvault
+    // Manange lock logic outside with lock onbehalf
 
     //============================================================================================//
     //                               VAULT LOGIC                                                  //
