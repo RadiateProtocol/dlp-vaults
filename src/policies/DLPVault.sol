@@ -42,24 +42,13 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
 
     //todo implement custom errors
     // =========  STATE ========= //
-    ERC20 public DLPAddress;
-    ERC20 public rewardsToken;
+    ERC20 public immutable DLPAddress;
+    ERC20 public immutable rewardsToken;
     address[] public rewardBaseTokens;
-    uint256 public amountBorrowed;
-    uint256 public interestfee; // Scaled by RATIO_DIVISOR
+    uint256 public amountStaked;
     uint256 public feePercent; // Deposit Fee
-    mapping(address => uint256) public borrowedBy;
 
     uint256 public withdrawalQueueIndex;
-
-    /// @notice Sushiswap router address
-    // IUniswapV2Router01 public uniswapRouter =
-    //     IUniswapV2Router01(0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506);
-
-    /// @notice WETH on Arbitrum
-    address public constant WETH = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
-
-    address public constant RDNT = 0x3082CC23568eA640225c2467653dB90e9250AaA0;
 
     IEligibilityDataProvider public eligibilityDataProvider =
         IEligibilityDataProvider(0xd4966DC49a10aa5467D65f4fA4b1449b5d874399);
@@ -75,6 +64,8 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     ILendingPool public constant lendingPool =
         ILendingPool(0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1);
 
+    uint256 public defaultLockIndex = 1;
+
     struct WithdrawalQueue {
         address caller;
         address owner;
@@ -87,12 +78,10 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     constructor(
         ERC20 _asset,
         ERC20 _rewardsToken,
-        uint256 _interestfee,
         Kernel _kernel
     ) ERC4626(_asset, "Radiate-DLP Vault", "RD-DLP") Policy(_kernel) {
         DLPAddress = _asset;
         rewardsToken = _rewardsToken; // WETH
-        interestfee = _interestfee;
     }
 
     //============================================================================================//
@@ -121,10 +110,6 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     //============================================================================================//
     //                                     ADMIN                                                  //
     //============================================================================================//
-
-    function setInterest(uint256 _interestfee) external onlyRole("admin") {
-        interestfee = _interestfee;
-    }
 
     function setDepositFee(uint256 _feePercent) external onlyRole("admin") {
         if (_feePercent >= 1e4) revert DLPVault_FeePercentTooHigh(_feePercent);
@@ -168,9 +153,19 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         _token.approveDelegation(_leverager, 0);
     }
 
-    //============================================================================================//
-    //                               REWARDS LOGIC                                                //
-    //============================================================================================//
+    function changeDefaultLockIndex(uint256 _index) external onlyRole("admin") {
+        defaultLockIndex = _index;
+        emit DefaultRelockIndexChanged(_index);
+    }
+
+    function withdrawTokens(ERC20 _token) external onlyRole("admin") {
+        if (_token == DLPAddress) {
+            processWithdrawalQueue();
+            // todo
+        }
+        _token.transfer(msg.sender, _token.balanceOf(address(this)));
+    }
+
     /**
      * @notice Exit DLP Position, take rewards penalty and repay DLP loan. Autoclaims rewards.
      * Exit can cause disqualification from rewards and penalty
@@ -179,6 +174,10 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     function forceWithdraw(uint256 amount_) external onlyRole("admin") {
         mfd.withdraw(amount_);
     }
+
+    //============================================================================================//
+    //                               REWARDS LOGIC                                                //
+    //============================================================================================//
 
     /**
      * @notice Claim rewards
@@ -223,12 +222,12 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         return true;
     }
 
-    /// @dev Set default lock index
-    function setDefaultRelockIndex(
-        uint256 _defaultLockIndex
-    ) external onlyRole("admin") {
-        mfd.setDefaultRelockTypeIndex(_defaultLockIndex); // 1 month
-        emit DefaultRelockIndexChanged(_defaultLockIndex);
+    function relock() external onlyRole("keeper") {
+        uint256 withdrawnAmt = mfd.withdrawExpiredLocksFor(address(this));
+        if (withdrawnAmt > 0) {
+            processWithdrawalQueue();
+        }
+        mfd.stake(withdrawnAmt, address(this), defaultLockIndex);
     }
 
     // Protocol Owned liquidity (DLPvault tokens) -> normal DLP -> maxlock DLP into DLPvault
@@ -243,7 +242,11 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         address receiver
     ) public override returns (uint256) {
         DLPAddress.transferFrom(msg.sender, address(this), amount);
-        afterDeposit(amount);
+        if (DLPAddress.allowance(address(this), address(mfd)) == 0) {
+            DLPAddress.approve(address(this), type(uint256).max);
+        }
+        mfd.stake(amount, address(this), defaultLockIndex); // @wooark - defaultLockIndex of 1 for 1 month lock?
+        amountStaked += amount;
         _mint(receiver, amount);
         return amount;
     }
@@ -260,6 +263,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
                 allowance[owner][msg.sender] = allowed - assets;
             }
         }
+        amountStaked -= assets;
         if (assets <= DLPAddress.balanceOf(address(this))) {
             // Process withdrawal since there's enough cash
             beforeWithdraw(assets);
@@ -337,7 +341,8 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     }
 
     function totalAssets() public view override returns (uint256) {
-        return amountBorrowed + DLPAddress.balanceOf(address(this));
+        // return balance of user assets, excluding PoL
+        return amountStaked;
     }
 
     // Brick redeem() to prevent users from redeeming – withdraws only
@@ -354,14 +359,6 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     function previewMint(uint256) public pure override returns (uint256) {
         return 0;
     }
-
-    //============================================================================================//
-    //                             STAKING LOGIC                                                  //
-    //============================================================================================//
-
-    //============================================================================================//
-    //                               LENDING LOGIC                                                //
-    //============================================================================================//
 
     //============================================================================================//
     //                             REWARDS LOGIC                                                  //
