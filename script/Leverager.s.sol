@@ -16,12 +16,7 @@ contract LeveragerScript is Script {
         address dlp = 0x32dF62dc3aEd2cD6224193052Ce665DC18165841;
         address weth = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
         address dai = 0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1;
-        DLPVault dlpVault = new DLPVault(
-            ERC20(dlp),
-            ERC20(weth),
-            0.1 * 1e4, // 10% interest rate
-            kernel
-        );
+        DLPVault dlpVault = new DLPVault(ERC20(dlp), ERC20(weth), kernel);
 
         vm.startBroadcast(_privateKey);
 
