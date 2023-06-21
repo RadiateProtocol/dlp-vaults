@@ -33,19 +33,18 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     );
     // =========  ERRORS ========= //
     error DLPVault_ONLY_AAVE_LENDING_POOL();
-
     error DLPVault_previous_reward_period_not_finished(uint256 periodFinish);
-    error DLPVault_provided_reward_rate_too_high(uint256 rewardRate);
     error DLPVault_WithdrawZero(address sender);
     error DLPVault_MintDisabled();
     error DLPVault_FeePercentTooHigh(uint256 _feePercent);
+    error DLPVault_VaultCapExceeded(uint256 _vaultCap);
 
-    //todo implement custom errors
     // =========  STATE ========= //
     ERC20 public immutable DLPAddress;
     ERC20 public immutable rewardsToken;
     address[] public rewardBaseTokens;
     uint256 public amountStaked;
+    uint256 public vaultCap;
     uint256 public feePercent; // Deposit Fee
 
     uint256 public withdrawalQueueIndex;
@@ -79,7 +78,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         ERC20 _asset,
         ERC20 _rewardsToken,
         Kernel _kernel
-    ) ERC4626(_asset, "Radiate-DLP Vault", "RD-DLP") Policy(_kernel) {
+    ) ERC4626(_asset, "Radiate-DLP Vault", "RAD-DLP") Policy(_kernel) {
         DLPAddress = _asset;
         rewardsToken = _rewardsToken; // WETH
     }
@@ -128,13 +127,8 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         return rewardBaseTokens;
     }
 
-    /**
-     *
-     * @param _amount Amount of WETH rewards for DLP lockers
-     */
-    function topUpRewards(uint256 _amount) external {
-        rewardsToken.transferFrom(msg.sender, address(this), _amount);
-        _notifyRewardAmount(_amount);
+    function setVaultCap(uint256 _vaultCap) external onlyRole("admin") {
+        vaultCap = _vaultCap;
     }
 
     // Enable credit delegation for the leverager contracts
@@ -153,10 +147,13 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         _token.approveDelegation(_leverager, 0);
     }
 
-    function changeDefaultLockIndex(uint256 _index) external onlyRole("admin") {
-        defaultLockIndex = _index;
-        emit DefaultRelockIndexChanged(_index);
-    }
+    // function changeDefaultLockIndex(uint256 _index) external onlyRole("admin") {
+    //     defaultLockIndex = _index;
+    //     emit DefaultRelockIndexChanged(_index);
+    // }
+    // function setAutoRelock(bool status) external onlyRole("admin") {
+    //     mfd.setRelock(status);
+    // }
 
     function withdrawTokens(ERC20 _token) external onlyRole("admin") {
         if (_token == DLPAddress) {
@@ -168,7 +165,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
 
     /**
      * @notice Exit DLP Position, take rewards penalty and repay DLP loan. Autoclaims rewards.
-     * Exit can cause disqualification from rewards and penalty
+     * Exit can cause disqualification from rewards and up to 50% penalty
      *
      */
     function forceWithdraw(uint256 amount_) external onlyRole("admin") {
@@ -230,8 +227,11 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         mfd.stake(withdrawnAmt, address(this), defaultLockIndex);
     }
 
-    // Protocol Owned liquidity (DLPvault tokens) -> normal DLP -> maxlock DLP into DLPvault
-    // Manange lock logic outside with lock onbehalf
+    function lock() external onlyRole("keeper") {
+        uint256 amount = DLPAddress.balanceOf(address(this));
+        mfd.stake(amount, address(this), defaultLockIndex); // @wooark - defaultLockIndex of 1 for 1 month lock?
+        amountStaked += amount;
+    }
 
     //============================================================================================//
     //                               VAULT LOGIC                                                  //
@@ -240,14 +240,18 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     function deposit(
         uint256 amount,
         address receiver
-    ) public override returns (uint256) {
+    ) public override updateReward(msg.sender) returns (uint256) {
+        if (amount + amountStaked > vaultCap)
+            revert DLPVault_VaultCapExceeded(amount + amountStaked);
         DLPAddress.transferFrom(msg.sender, address(this), amount);
         if (DLPAddress.allowance(address(this), address(mfd)) == 0) {
             DLPAddress.approve(address(this), type(uint256).max);
         }
-        mfd.stake(amount, address(this), defaultLockIndex); // @wooark - defaultLockIndex of 1 for 1 month lock?
-        amountStaked += amount;
+        if (withdrawalQueueIndex != withdrawalQueue.length)
+            processWithdrawalQueue();
+
         _mint(receiver, amount);
+
         return amount;
     }
 
@@ -255,7 +259,8 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         uint256 assets,
         address receiver,
         address owner
-    ) public override returns (uint256) {
+    ) public override updateReward(owner) returns (uint256) {
+        getReward(owner);
         if (msg.sender != owner) {
             uint256 allowed = allowance[owner][msg.sender]; // Saves gas for limited approvals.
 
@@ -263,10 +268,12 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
                 allowance[owner][msg.sender] = allowed - assets;
             }
         }
+
         amountStaked -= assets;
+        if (assets == 0) revert DLPVault_WithdrawZero(msg.sender);
+
         if (assets <= DLPAddress.balanceOf(address(this))) {
             // Process withdrawal since there's enough cash
-            beforeWithdraw(assets);
             _burn(owner, assets);
 
             emit Withdraw(msg.sender, receiver, owner, assets, assets);
@@ -275,6 +282,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
             return assets;
         } else {
             // Add to withdrawal queue
+            // Doesn't autoclaim rewards while you're in the withdrawal queue.
             uint256 queueIndex = withdrawalQueue.length - withdrawalQueueIndex;
             withdrawalQueue.push(
                 WithdrawalQueue({
@@ -304,7 +312,6 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
 
                 // If user balance dips below withdrawal amount, their withdraw request gets cancelled
                 if (balanceOf[queueItem.owner] >= queueItem.assets) {
-                    beforeWithdraw(queueItem.assets);
                     _burn(queueItem.owner, queueItem.assets);
                     asset.transfer(queueItem.receiver, queueItem.assets);
 
@@ -326,19 +333,8 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     }
 
     //============================================================================================//
-    //                             4626 Overrides                                                 //
+    //                             4626 OVERRIDES                                                 //
     //============================================================================================//
-
-    function afterDeposit(uint256) internal {
-        if (withdrawalQueueIndex != withdrawalQueue.length) {
-            processWithdrawalQueue();
-        }
-        /// @dev removed updateReward bc it causes div by 0.
-    }
-
-    function beforeWithdraw(uint256 amount) internal updateReward(msg.sender) {
-        if (amount == 0) revert DLPVault_WithdrawZero(msg.sender);
-    }
 
     function totalAssets() public view override returns (uint256) {
         // return balance of user assets, excluding PoL
@@ -361,104 +357,147 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     }
 
     //============================================================================================//
-    //                             REWARDS LOGIC                                                  //
+    //                             ERC20 OVERRIDES                                                //
     //============================================================================================//
 
-    /* ========== STATE VARIABLES ========== */
+    function transfer(
+        address to,
+        uint256 amount
+    ) public override updateReward(to) returns (bool) {
+        getReward();
 
-    uint256 public periodFinish = 0;
-    uint256 public rewardRate = 0;
-    uint256 public rewardsDuration = 7 days;
-    uint256 public lastUpdateTime;
-    uint256 public rewardPerTokenStored;
+        balanceOf[msg.sender] -= amount;
 
-    mapping(address => uint256) public userRewardPerTokenPaid;
-    mapping(address => uint256) public rewards;
+        // Cannot overflow because the sum of all user
+        // balances can't exceed the max uint256 value.
+        unchecked {
+            balanceOf[to] += amount;
+        }
 
-    /* ========== VIEWS ========== */
-    function lastTimeRewardApplicable() public view returns (uint256) {
-        return block.timestamp < periodFinish ? block.timestamp : periodFinish;
+        emit Transfer(msg.sender, to, amount);
+
+        return true;
     }
 
-    function rewardPerToken() public view returns (uint256) {
-        if (totalAssets() == 0) {
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) public override updateReward(to) returns (bool) {
+        getReward(from);
+
+        uint256 allowed = allowance[from][msg.sender]; // Saves gas for limited approvals.
+
+        if (allowed != type(uint256).max)
+            allowance[from][msg.sender] = allowed - amount;
+
+        balanceOf[from] -= amount;
+
+        // Cannot overflow because the sum of all user
+        // balances can't exceed the max uint256 value.
+        unchecked {
+            balanceOf[to] += amount;
+        }
+
+        emit Transfer(from, to, amount);
+
+        return true;
+    }
+
+    //============================================================================================//
+    //                             REWARDS LOGIC                                                  //
+    //============================================================================================//
+    // =========  STATE ========= //
+    // Duration of rewards to be paid out (in seconds)
+    uint public duration;
+    // Timestamp of when the rewards finish
+    uint public finishAt;
+    // Minimum of last updated time and reward finish time
+    uint public updatedAt;
+    // Reward to be paid out per second
+    uint public rewardRate;
+    // Sum of (reward rate * dt * 1e18 / total supply)
+    uint public rewardPerTokenStored;
+    // User address => rewardPerTokenStored
+    mapping(address => uint) public userRewardPerTokenPaid;
+    // User address => rewards to be claimed
+    mapping(address => uint) public rewards;
+
+    modifier updateReward(address _account) {
+        rewardPerTokenStored = rewardPerToken();
+        updatedAt = lastTimeRewardApplicable();
+
+        if (_account != address(0)) {
+            rewards[_account] = earned(_account);
+            userRewardPerTokenPaid[_account] = rewardPerTokenStored;
+        }
+
+        _;
+    }
+
+    function lastTimeRewardApplicable() public view returns (uint) {
+        return _min(finishAt, block.timestamp);
+    }
+
+    function rewardPerToken() public view returns (uint) {
+        if (totalSupply == 0) {
             return rewardPerTokenStored;
         }
+
         return
-            ((rewardPerTokenStored +
-                lastTimeRewardApplicable() -
-                lastUpdateTime) *
-                rewardRate *
-                1e18) / totalSupply;
+            rewardPerTokenStored +
+            (rewardRate * (lastTimeRewardApplicable() - updatedAt) * 1e18) /
+            totalSupply;
     }
 
-    function earned(address account) public view returns (uint256) {
+    function earned(address _account) public view returns (uint) {
         return
-            ((balanceOf[account] *
-                rewardPerToken() -
-                userRewardPerTokenPaid[account]) / 1e18) + rewards[account];
+            ((balanceOf[_account] *
+                (rewardPerToken() - userRewardPerTokenPaid[_account])) / 1e18) +
+            rewards[_account];
     }
 
-    function getRewardForDuration() external view returns (uint256) {
-        return rewardRate * rewardsDuration;
-    }
-
-    /* ========== MUTATIVE FUNCTIONS ========== */
-
-    function getReward() public updateReward(msg.sender) {
-        //overrides
-        uint256 reward = rewards[msg.sender];
+    function getReward(address receiver) public updateReward(receiver) {
+        uint reward = rewards[receiver];
         if (reward > 0) {
-            rewards[msg.sender] = 0;
-            rewardsToken.transfer(msg.sender, reward);
-            emit RewardPaid(msg.sender, reward);
+            rewards[receiver] = 0;
+            rewardsToken.transfer(receiver, reward);
         }
+        emit RewardPaid(receiver, reward);
     }
 
-    /* ========== RESTRICTED FUNCTIONS ========== */
+    function getReward() public {
+        getReward(msg.sender);
+    }
 
-    function _notifyRewardAmount(
-        uint256 reward
-    ) internal updateReward(address(0)) {
-        if (block.timestamp >= periodFinish) {
-            rewardRate = reward / rewardsDuration;
+    function setRewardsDuration(uint _duration) external onlyRole("admin") {
+        if (finishAt >= block.timestamp)
+            revert DLPVault_previous_reward_period_not_finished(finishAt);
+        duration = _duration;
+    }
+
+    function notifyRewardAmount(
+        uint _amount
+    ) external onlyRole("admin") updateReward(address(0)) {
+        if (block.timestamp >= finishAt) {
+            rewardRate = _amount / duration;
         } else {
-            uint256 remaining = periodFinish - block.timestamp;
-            uint256 leftover = remaining * rewardRate;
-            rewardRate = (reward + leftover) / rewardsDuration;
+            uint remainingRewards = (finishAt - block.timestamp) * rewardRate;
+            rewardRate = (_amount + remainingRewards) / duration;
         }
 
-        // Ensure the provided reward amount is not more than the balance in the contract.
-        // This keeps the reward rate in the right range, preventing overflows due to
-        // very high values of rewardRate in the earned and rewardsPerToken functions;
-        // Reward + leftover must be less than 2^256 / 10^18 to avoid overflow.
-        uint256 balance = rewardsToken.balanceOf(address(this));
-        if (rewardRate > balance / rewardsDuration)
-            revert DLPVault_provided_reward_rate_too_high(rewardRate);
+        require(rewardRate > 0, "reward rate = 0");
+        require(
+            rewardRate * duration <= rewardsToken.balanceOf(address(this)),
+            "reward amount > balance"
+        );
 
-        lastUpdateTime = block.timestamp;
-        periodFinish = block.timestamp + rewardsDuration;
-        emit RewardAdded(reward);
+        finishAt = block.timestamp + duration;
+        updatedAt = block.timestamp;
+        emit RewardAdded(_amount);
     }
 
-    function setRewardsDuration(
-        uint256 _rewardsDuration
-    ) external onlyRole("admin") {
-        if (block.timestamp < periodFinish)
-            revert DLPVault_previous_reward_period_not_finished(periodFinish);
-        rewardsDuration = _rewardsDuration;
-        emit RewardsDurationUpdated(rewardsDuration);
-    }
-
-    /* ========== MODIFIERS ========== */
-
-    modifier updateReward(address account) {
-        rewardPerTokenStored = rewardPerToken();
-        lastUpdateTime = lastTimeRewardApplicable();
-        if (account != address(0)) {
-            rewards[account] = earned(account);
-            userRewardPerTokenPaid[account] = rewardPerTokenStored;
-        }
-        _;
+    function _min(uint x, uint y) private pure returns (uint) {
+        return x <= y ? x : y;
     }
 }
