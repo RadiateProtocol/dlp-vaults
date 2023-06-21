@@ -49,7 +49,7 @@ contract Leverager is RolesConsumer, Policy {
     /// @notice Aave lending pool address (for flashloans)
     IPool public constant aaveLendingPool =
         IPool(0x794a61358D6845594F94dc1DB02A252b5b4814aD);
-    uint256 public constant RATIO_DIVISOR = 1e4;
+    uint256 public constant RATIO_DIVISOR = 1e6;
 
     ERC20 public immutable asset;
 

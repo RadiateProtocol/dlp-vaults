@@ -21,8 +21,6 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     event RewardAdded(uint256 reward);
     event RewardPaid(address indexed user, uint256 reward);
     event RewardsDurationUpdated(uint256 newDuration);
-    event Borrow(address indexed _leverager, uint256 _amount);
-    event Repay(address indexed _leverager, uint256 _amount);
     event FeePercentUpdated(uint256 feePercent);
     event RewardBaseTokensUpdated(address[] rewardBaseTokens);
     event WithdrawalQueued(
@@ -48,9 +46,6 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     uint256 public feePercent; // Deposit Fee
 
     uint256 public withdrawalQueueIndex;
-
-    IEligibilityDataProvider public eligibilityDataProvider =
-        IEligibilityDataProvider(0xd4966DC49a10aa5467D65f4fA4b1449b5d874399);
 
     IMultiFeeDistribution public mfd =
         IMultiFeeDistribution(0x76ba3eC5f5adBf1C58c91e86502232317EeA72dE);
@@ -109,9 +104,9 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     //============================================================================================//
     //                                     ADMIN                                                  //
     //============================================================================================//
-
+    // Deposit Fee for Leverager
     function setDepositFee(uint256 _feePercent) external onlyRole("admin") {
-        if (_feePercent >= 1e4) revert DLPVault_FeePercentTooHigh(_feePercent);
+        if (_feePercent >= 1e6) revert DLPVault_FeePercentTooHigh(_feePercent);
         feePercent = _feePercent;
         emit FeePercentUpdated(_feePercent);
     }
@@ -132,7 +127,6 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     }
 
     // Enable credit delegation for the leverager contracts
-
     function enableCreditDelegation(
         ICreditDelegationToken _token,
         address _leverager
@@ -147,10 +141,11 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         _token.approveDelegation(_leverager, 0);
     }
 
-    // function changeDefaultLockIndex(uint256 _index) external onlyRole("admin") {
-    //     defaultLockIndex = _index;
-    //     emit DefaultRelockIndexChanged(_index);
-    // }
+    function changeDefaultLockIndex(uint256 _index) external onlyRole("admin") {
+        defaultLockIndex = _index;
+        emit DefaultRelockIndexChanged(_index);
+    }
+
     // function setAutoRelock(bool status) external onlyRole("admin") {
     //     mfd.setRelock(status);
     // }
@@ -158,7 +153,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     function withdrawTokens(ERC20 _token) external onlyRole("admin") {
         if (_token == DLPAddress) {
             processWithdrawalQueue();
-            // todo
+            // Possible to withdraw user DLP tokens if they are unlocked – should transfer in DLP.
         }
         _token.transfer(msg.sender, _token.balanceOf(address(this)));
     }
@@ -243,18 +238,20 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     ) public override updateReward(msg.sender) returns (uint256) {
         if (amount + amountStaked > vaultCap)
             revert DLPVault_VaultCapExceeded(amount + amountStaked);
+
         DLPAddress.transferFrom(msg.sender, address(this), amount);
-        if (DLPAddress.allowance(address(this), address(mfd)) == 0) {
+
+        if (DLPAddress.allowance(address(this), address(mfd)) == 0)
             DLPAddress.approve(address(this), type(uint256).max);
-        }
+
         if (withdrawalQueueIndex != withdrawalQueue.length)
             processWithdrawalQueue();
 
         _mint(receiver, amount);
-
         return amount;
     }
 
+    // Withdraw DLP tokens from the vault
     function withdraw(
         uint256 assets,
         address receiver,
@@ -269,10 +266,13 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
             }
         }
 
-        amountStaked -= assets;
         if (assets == 0) revert DLPVault_WithdrawZero(msg.sender);
-
-        if (assets <= DLPAddress.balanceOf(address(this))) {
+        // If there's enough cash and the queue is empty, process withdrawal
+        if (
+            assets <= DLPAddress.balanceOf(address(this)) &&
+            withdrawalQueue.length == withdrawalQueueIndex
+        ) {
+            amountStaked -= assets;
             // Process withdrawal since there's enough cash
             _burn(owner, assets);
 
@@ -298,6 +298,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         }
     }
 
+    // Process open withdrawal requests.
     function processWithdrawalQueue() public {
         for (
             uint256 i = withdrawalQueueIndex;
@@ -314,6 +315,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
                 if (balanceOf[queueItem.owner] >= queueItem.assets) {
                     _burn(queueItem.owner, queueItem.assets);
                     asset.transfer(queueItem.receiver, queueItem.assets);
+                    amountStaked -= queueItem.assets;
 
                     emit Withdraw(
                         queueItem.caller,
@@ -359,7 +361,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     //============================================================================================//
     //                             ERC20 OVERRIDES                                                //
     //============================================================================================//
-
+    // Overriding ERC20 transfer and transferFrom to update rewards
     function transfer(
         address to,
         uint256 amount
@@ -470,7 +472,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         getReward(msg.sender);
     }
 
-    function setRewardsDuration(uint _duration) external onlyRole("admin") {
+    function setRewardsDuration(uint _duration) external onlyRole("keeper") {
         if (finishAt >= block.timestamp)
             revert DLPVault_previous_reward_period_not_finished(finishAt);
         duration = _duration;
@@ -478,7 +480,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
 
     function notifyRewardAmount(
         uint _amount
-    ) external onlyRole("admin") updateReward(address(0)) {
+    ) external onlyRole("keeper") updateReward(address(0)) {
         if (block.timestamp >= finishAt) {
             rewardRate = _amount / duration;
         } else {
