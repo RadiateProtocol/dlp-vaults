@@ -1935,10 +1935,10 @@ contract RADPresale is Ownable, ReentrancyGuard, AccessControl {
 
     address public treasury;
 
-    // 1 RAD == 15 USDC
-    uint256 public rate = 15 * (10 ** 2);
+    // 1 RAD == 16.5 USDC
+    uint256 public rate = 16.5 * (10 ** 2);
 
-    uint256 public cap = 200000 * (10 ** 18);
+    uint256 public cap = 10000 * (10 ** 18);
     uint256 public sold = 0;
     uint256 public userCap = 0;
 
@@ -2002,11 +2002,11 @@ contract RADPresale is Ownable, ReentrancyGuard, AccessControl {
         revert("This contract does not accept ETH");
     }
 
-    function whitelist(address[] memory addresses) external onlyOwner {
-        for (uint i = 0; i < addresses.length; i++) {
-            _grantRole(WHITELIST, addresses[i]);
-        }
-    }
+    // function whitelist(address[] memory addresses) external onlyOwner {
+    //     for (uint i = 0; i < addresses.length; i++) {
+    //         _grantRole(WHITELIST, addresses[i]);
+    //     }
+    // }
 
     /**
      * @dev low level token purchase ***DO NOT OVERRIDE***
@@ -2016,10 +2016,10 @@ contract RADPresale is Ownable, ReentrancyGuard, AccessControl {
         uint256 _amount,
         address _beneficiary
     ) public nonReentrant {
-        require(
-            hasRole(WHITELIST, _beneficiary),
-            "not whitelisted, wait for public presale"
-        );
+        // require(
+        //     hasRole(WHITELIST, _beneficiary),
+        //     "not whitelisted, wait for public presale"
+        // );
         require(
             userInfo[_beneficiary].contributed + _amount <= userCap,
             "amount exceed user cap"
