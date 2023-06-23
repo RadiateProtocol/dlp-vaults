@@ -21,6 +21,7 @@ contract MerkleDistributor {
     bytes32 public immutable merkleRoot;
     uint256 public immutable startTime;
     uint256 public immutable endTime;
+    address public immutable owner;
 
     // This is a packed array of booleans.
     mapping(uint256 => uint256) private claimedBitMap;
@@ -35,6 +36,7 @@ contract MerkleDistributor {
         merkleRoot = merkleRoot_;
         startTime = startTime_;
         endTime = endTime_;
+        owner = msg.sender;
     }
 
     function isClaimed(uint256 index) public view returns (bool) {
@@ -75,9 +77,7 @@ contract MerkleDistributor {
         if (
             block.timestamp > endTime &&
             IERC20(token).balanceOf(address(this)) > 0
-        ) {
-            _burn();
-        } else if (block.timestamp > endTime) {
+        ) {} else if (block.timestamp > endTime) {
             revert("MerkleDistributor: Drop ended.");
         }
 
@@ -87,11 +87,9 @@ contract MerkleDistributor {
         emit Claimed(index, account, amount);
     }
 
-    function _burn() internal {
-        IERC20(token).transfer(
-            address(0),
-            IERC20(token).balanceOf(address(this))
-        );
+    function _end() external {
+        require(msg.sender == owner, "MerkleDistributor: not owner");
+        IERC20(token).transfer(owner, IERC20(token).balanceOf(address(this)));
     }
 
     event Claimed(uint256 index, address account, uint256 amount);
