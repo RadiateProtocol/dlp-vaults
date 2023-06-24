@@ -172,7 +172,6 @@ contract TokenScript is Script {
         // Set up roles
         rolesAdmin.grantRole("admin", multisig);
         // whitelist
-        presale.whitelist(arr);
 
         kernel.executeAction(Actions.DeactivatePolicy, address(initialization));
         kernel.executeAction(Actions.ChangeExecutor, multisig);
