@@ -326,8 +326,8 @@ contract RADTClaim is Ownable, ReentrancyGuard {
         0x684f147b465fCf920Fc146357f181B5C24C3BdEA,
         0x904bb412732E97fc20E129c944aa89B091E25947,
         0xf9D237D02bAA2295296707F6938FEc0Ae01649A4,
-        0xbfB033961832cCf5a2b1F6a5434025B5221eB57d,
-        0x996A7B9C3751326B35A107140dea5c261e61963a
+        0xbfB033961832cCf5a2b1F6a5434025B5221eB57d
+        // ,0x996A7B9C3751326B35A107140dea5c261e61963a
     ];
 
     event TokenClaimed(address indexed beneficiary, uint256 amount);
