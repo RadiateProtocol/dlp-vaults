@@ -13,7 +13,7 @@ contract rDLP is ERC20Upgradeable, OwnableUpgradeable, UUPSUpgradeable {
         ERC20(0x32dF62dc3aEd2cD6224193052Ce665DC18165841);
 
     function initialize(address owner) public initializer {
-        __ERC20_init("Radiate dLP", "dDLP");
+        __ERC20_init("Radiate DLP", "rDLP");
         __Ownable_init();
         __UUPSUpgradeable_init();
         transferOwnership(owner);
@@ -32,7 +32,7 @@ contract rDLP is ERC20Upgradeable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     function stake(uint256 amount) public {
-        mfd.stake(amount, address(this), 1);
+        _burn(msg.sender, amount);
     }
 
     // Recover reward tokens and any other tokens
@@ -51,8 +51,7 @@ contract rDLP is ERC20Upgradeable, OwnableUpgradeable, UUPSUpgradeable {
         mfd.stake(amount, address(this), 1);
     }
 
-    // Exit any unlocked dLP and claim any pending rewards if _claim is true
-    function exit(bool _claim) external onlyOwner {
-        mfd.exit(_claim);
+    function exit() external onlyOwner {
+        mfd.exit(true);
     }
 }

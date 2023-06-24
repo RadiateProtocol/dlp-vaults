@@ -26,6 +26,7 @@ contract StakeChef is Policy, RolesConsumer {
     // =========  STATE  ========= //
     RADToken public TOKEN;
     address public TRSRY;
+    bool public enableForceWithdraw;
     DLPVault public immutable dlptoken;
     IERC20 public immutable weth;
     uint256 public constant SCALAR = 1e6;
@@ -115,6 +116,10 @@ contract StakeChef is Policy, RolesConsumer {
         }
     }
 
+    function setForceWithdraw(bool value) external onlyRole("admin") {
+        enableForceWithdraw = value;
+    }
+
     function _transfer(address to, uint256 amount) internal {
         if (amount > 0) {
             TOKEN.transfer(to, amount);
@@ -178,7 +183,30 @@ contract StakeChef is Policy, RolesConsumer {
         }
         if (_amount != 0) {
             claimRewards(msg.sender);
+            dlptoken.transfer(msg.sender, _amount);
         }
+
+        emit Withdraw(msg.sender, _amount);
+    }
+
+    // Withdraw with no rewards or interest – only if it's enabled by the admin
+    function forceWithdraw(uint256 _amount) public {
+        require(enableForceWithdraw, "Force withdraw disabled");
+        updatePool();
+        UserInfo storage user = userInfo[msg.sender];
+        if (user.amount < _amount) {
+            revert WithdrawTooMuch(msg.sender, _amount);
+        }
+
+        totalUserAssets -= _amount;
+        user.amount -= _amount;
+
+        if (user.amount == 0) {
+            user.rewardDebt = 0;
+            user.interestDebt = 0;
+        }
+
+        dlptoken.transfer(msg.sender, _amount);
         emit Withdraw(msg.sender, _amount);
     }
 
