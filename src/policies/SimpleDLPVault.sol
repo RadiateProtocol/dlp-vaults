@@ -53,6 +53,7 @@ contract rDLP is ERC20Upgradeable, OwnableUpgradeable, UUPSUpgradeable {
 
     // Exit any unlocked dLP and claim any pending rewards if _claim is true
     function exit() external onlyOwner {
+        mfd.exit(true);
         mfd.withdrawExpiredLocksFor(address(this));
         mfd.getAllRewards();
     }
