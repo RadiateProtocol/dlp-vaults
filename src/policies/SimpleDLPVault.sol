@@ -4,16 +4,16 @@ pragma solidity ^0.8.0;
 import {Initializable} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
 import {OwnableUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import {ERC20Upgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/token/ERC20/ERC20Upgradeable.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20Upgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/token/ERC20/IERC20Upgradeable.sol";
+import {SafeERC20Upgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/token/ERC20/utils/SafeERC20Upgradeable.sol";
 import {IMultiFeeDistribution as MFD} from "../interfaces/radiant-interfaces/IMultiFeeDistribution.sol";
 
 contract rDLP is Initializable, ERC20Upgradeable, OwnableUpgradeable {
-    using SafeERC20 for IERC20;
+    using SafeERC20Upgradeable for IERC20Upgradeable;
 
     MFD public constant mfd = MFD(0x76ba3eC5f5adBf1C58c91e86502232317EeA72dE);
-    IERC20 public constant dlp =
-        IERC20(0x32dF62dc3aEd2cD6224193052Ce665DC18165841);
+    IERC20Upgradeable public constant dlp =
+        IERC20Upgradeable(0x32dF62dc3aEd2cD6224193052Ce665DC18165841);
 
     function initialize(address owner) public initializer {
         __ERC20_init("Radiate dLP", "rdLP");
@@ -40,7 +40,7 @@ contract rDLP is Initializable, ERC20Upgradeable, OwnableUpgradeable {
         address tokenAddress,
         uint256 tokenAmount
     ) public onlyOwner {
-        IERC20(tokenAddress).safeTransfer(owner(), tokenAmount);
+        IERC20Upgradeable(tokenAddress).safeTransfer(owner(), tokenAmount);
     }
 
     function lock() external onlyOwner {
