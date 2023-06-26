@@ -16,7 +16,7 @@ contract rDLP is Initializable, ERC20Upgradeable, OwnableUpgradeable {
         IERC20(0x32dF62dc3aEd2cD6224193052Ce665DC18165841);
 
     function initialize(address owner) public initializer {
-        __ERC20_init("Radiate dLP", "dDLP");
+        __ERC20_init("Radiate dLP", "rdLP");
         __Ownable_init();
         transferOwnership(owner);
     }
@@ -51,7 +51,6 @@ contract rDLP is Initializable, ERC20Upgradeable, OwnableUpgradeable {
         mfd.stake(amount, address(this), 1);
     }
 
-    // Exit any unlocked dLP and claim any pending rewards if _claim is true
     function exit() external onlyOwner {
         mfd.exit(true);
         mfd.withdrawExpiredLocksFor(address(this));
