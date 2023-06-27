@@ -9,7 +9,7 @@ import {SafeERC20Upgradeable} from "lib/openzeppelin-contracts-upgradeable/contr
 import {IMultiFeeDistribution as MFD} from "../interfaces/radiant-interfaces/IMultiFeeDistribution.sol";
 
 contract rDLP is Initializable, ERC20Upgradeable, OwnableUpgradeable {
-    using SafeERC20Upgradeable for IERC20Upgradeable;
+    using SafeERC20 for IERC20;
 
     MFD public constant mfd = MFD(0x76ba3eC5f5adBf1C58c91e86502232317EeA72dE);
     IERC20Upgradeable public constant dlp =

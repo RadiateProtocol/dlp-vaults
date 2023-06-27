@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.15;
 import "src/policies/Leverager.sol";
-import "./interfaces/aave/IFlashLoanSimpleReceiver.sol";
-import "./interfaces/aave/IPool.sol";
-import "./interfaces/radiant-interfaces/ILendingPool.sol";
+import "../interfaces/aave/IFlashLoanSimpleReceiver.sol";
+import "../interfaces/aave/IPool.sol";
+import "../interfaces/radiant-interfaces/ILendingPool.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC20} from "@solmate/tokens/ERC20.sol";
 

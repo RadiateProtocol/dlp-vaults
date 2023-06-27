@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
                          $$\ $$\            $$\               
@@ -16,12 +17,11 @@ $$ |     \$$$$$$$ |\$$$$$$$ |$$ |\$$$$$$$ | \$$$$  |\$$$$$$$\
 https://radiateprotocol.com/
 
  */
-contract MerkleDistributor {
+contract MerkleDistributor is Ownable {
     address public immutable token;
     bytes32 public immutable merkleRoot;
     uint256 public immutable startTime;
     uint256 public immutable endTime;
-    address public immutable owner;
 
     // This is a packed array of booleans.
     mapping(uint256 => uint256) private claimedBitMap;
@@ -36,7 +36,6 @@ contract MerkleDistributor {
         merkleRoot = merkleRoot_;
         startTime = startTime_;
         endTime = endTime_;
-        owner = msg.sender;
     }
 
     function isClaimed(uint256 index) public view returns (bool) {
@@ -74,10 +73,7 @@ contract MerkleDistributor {
             block.timestamp >= startTime,
             "MerkleDistributor: Drop not started."
         );
-        if (
-            block.timestamp > endTime &&
-            IERC20(token).balanceOf(address(this)) > 0
-        ) {} else if (block.timestamp > endTime) {
+        if (block.timestamp > endTime) {
             revert("MerkleDistributor: Drop ended.");
         }
 
@@ -87,9 +83,11 @@ contract MerkleDistributor {
         emit Claimed(index, account, amount);
     }
 
-    function _end() external {
-        require(msg.sender == owner, "MerkleDistributor: not owner");
-        IERC20(token).transfer(owner, IERC20(token).balanceOf(address(this)));
+    function _end() external onlyOwner {
+        IERC20(token).transfer(
+            msg.sender,
+            IERC20(token).balanceOf(address(this))
+        );
     }
 
     event Claimed(uint256 index, address account, uint256 amount);
