@@ -50,31 +50,20 @@ contract dLPZap is Ownable {
 
     constructor() Ownable() {}
 
-    /// @dev Return estimated amount of Asset tokens to receive for given amount of tokens
-    function _estimateout(
-        uint256 _amtIn,
-        bool direction
-    ) internal view returns (uint256 tokensOut) {
-        (, int256 rdntAnswer, , , ) = rdntChainlink.latestRoundData(); // 8 decimals
-        uint256 priceinRdnt = uint256(rdntAnswer);
-        (, int256 ethAnswer, , , ) = ethChainlink.latestRoundData(); // 8 decimals
-        uint256 priceInEth = uint256(ethAnswer);
-        if (direction) {
-            tokensOut = (_amtIn * priceInEth) / priceinRdnt; // 18 decimals
-        } else {
-            tokensOut = (priceinRdnt * _amtIn) / priceInEth; // 18 decimals
-        }
-    }
-
     function zapRDNT(uint256 rdntAmount) public returns (uint256) {
         RDNT.transferFrom(msg.sender, address(this), rdntAmount);
         return _zap(rdntAmount, true);
     }
 
-    function ethZap() external payable returns (uint256) {
+    function zapETH() external payable returns (uint256) {
         // Wrap incoming ETH into WETH
         WETH.deposit{value: msg.value}();
         // Call zap function with WETH
+        uint256 wethAmount = WETH.balanceOf(address(this));
+        return _zap(wethAmount, false);
+    }
+
+    function zapWETH() public returns (uint256) {
         uint256 wethAmount = WETH.balanceOf(address(this));
         return _zap(wethAmount, false);
     }
@@ -155,6 +144,23 @@ contract dLPZap is Ownable {
         return lpAmount;
     }
 
+    /// @dev Return estimated amount of Asset tokens to receive for given amount of tokens
+    function _estimateout(
+        uint256 _amtIn,
+        bool direction
+    ) internal view returns (uint256 tokensOut) {
+        (, int256 rdntAnswer, , , ) = rdntChainlink.latestRoundData(); // 8 decimals
+        uint256 priceinRdnt = uint256(rdntAnswer);
+        (, int256 ethAnswer, , , ) = ethChainlink.latestRoundData(); // 8 decimals
+        uint256 priceInEth = uint256(ethAnswer);
+        if (direction) {
+            tokensOut = (_amtIn * priceInEth) / priceinRdnt; // RDNT -> WETH
+        } else {
+            tokensOut = (priceinRdnt * _amtIn) / priceInEth; // WETH -> RDNT
+        }
+    }
+
+    // Admin
     function recoverERC20(
         address tokenAddress,
         uint256 tokenAmount
