@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.15;
 
-import "../policies/SimpleDLPVault.sol";
+import {rDLP} from "../policies/SimpleDLPVault.sol";
 
 import "src/interfaces/uniswap/IUniswapV2Factory.sol";
 import "src/interfaces/uniswap/IUNiswapV2Router02.sol";
 import "src/interfaces/radiant-interfaces/IChainlinkAggregator.sol";
+
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "src/interfaces/balancer/IVault.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract dLPZap {
+import {IVault, IWETH, IAsset} from "src/interfaces/balancer/IVault.sol";
+import {IWeightedPool} from "src/interfaces/balancer/IWeightedPoolFactory.sol";
+
+contract dLPZap is Ownable {
     using SafeERC20 for IERC20;
     uint256 public constant RATIO_DIVISOR = 10000;
     uint256 public constant BALANCER_RATIO = 8000;
@@ -43,6 +47,8 @@ contract dLPZap {
 
     IERC20 public constant BALANCER_LP =
         IERC20(0x32dF62dc3aEd2cD6224193052Ce665DC18165841);
+
+    constructor() Ownable() {}
 
     /// @dev Return estimated amount of Asset tokens to receive for given amount of tokens
     function _estimateRDNTout(
@@ -98,7 +104,7 @@ contract dLPZap {
             userDataEncoded,
             false
         );
-        BALANCER.joinPool(poolId, address(this), address(this), inRequest);
+        BALANCER.joinPool(balPool, address(this), address(this), inRequest);
 
         rdLPVault.mint(msg.sender, BALANCER_LP.balanceOf(address(this)));
     }
@@ -109,5 +115,17 @@ contract dLPZap {
         // Call zap function with WETH
         uint256 wethAmount = WETH.balanceOf(address(this));
         return zap(wethAmount);
+    }
+
+    function recoverERC20(
+        address tokenAddress,
+        uint256 tokenAmount
+    ) external onlyOwner returns (bool) {
+        require(
+            msg.sender == address(rdLPVault),
+            "Only rdLPVault can recover tokens"
+        );
+        IERC20(tokenAddress).safeTransfer(msg.sender, tokenAmount);
+        return true;
     }
 }
