@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.15;
 
-import {rDLP} from "../policies/SimpleDLPVault.sol";
+import {rDLP} from "../SimpleDLPVault.sol";
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -34,16 +34,12 @@ contract dLPZap is Ownable {
 
     constructor() Ownable() {}
 
-    function zapWETH(uint256 wethAmt) public returns (uint256) {
-        IERC20(address(WETH)).transferFrom(
+    function zap(uint256 rdntAmt) external payable returns (uint256) {
+        RDNT.transferFrom(
             msg.sender,
             address(this),
-            wethAmt
+            rdntAmt
         );
-        return joinPool();
-    }
-
-    function zap() external payable returns (uint256) {
         WETH.deposit{value: msg.value}();
         return joinPool();
     }
