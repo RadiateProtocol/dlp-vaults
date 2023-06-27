@@ -63,8 +63,8 @@ contract dLPZap is Ownable {
         return _zap(wethAmount, false);
     }
 
-    function zapWETH() public returns (uint256) {
-        uint256 wethAmount = WETH.balanceOf(address(this));
+    function zapWETH(uint256 wethAmount) public returns (uint256) {
+        WETH.transferFrom(msg.sender, address(this), wethAmount);
         return _zap(wethAmount, false);
     }
 
