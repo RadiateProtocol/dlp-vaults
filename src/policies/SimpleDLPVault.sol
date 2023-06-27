@@ -32,10 +32,6 @@ contract rDLP is Initializable, ERC20Upgradeable, OwnableUpgradeable {
         dlp.safeTransfer(msg.sender, amount);
     }
 
-    function stake(uint256 amount) public {
-        mfd.stake(amount, address(this), 1);
-    }
-
     // Recover reward tokens and any other tokens
     function recoverTokens(
         address tokenAddress,
