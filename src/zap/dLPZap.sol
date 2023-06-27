@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.15;
 
-import {rdLP} from "../policies/SimpleDLPVault.sol";
+import "../policies/SimpleDLPVault.sol";
 
 import "src/interfaces/uniswap/IUniswapV2Factory.sol";
 import "src/interfaces/uniswap/IUNiswapV2Router02.sol";
@@ -35,11 +35,14 @@ contract dLPZap {
     IVault public constant BALANCER =
         IVault(0xBA12222222228d8Ba445958a75a0704d566BF2C8);
 
-    rdLP public constant rdLPVault =
-        rdLP(0x32dF62dc3aEd2cD6224193052Ce665DC18165841);
+    rDLP public constant rdLPVault =
+        rDLP(0x32dF62dc3aEd2cD6224193052Ce665DC18165841);
 
     bytes32 public constant balPool =
         0x32df62dc3aed2cd6224193052ce665dc181658410002000000000000000003bd;
+
+    IERC20 public constant BALANCER_LP =
+        IERC20(0x32dF62dc3aEd2cD6224193052Ce665DC18165841);
 
     /// @dev Return estimated amount of Asset tokens to receive for given amount of tokens
     function _estimateRDNTout(
@@ -75,14 +78,29 @@ contract dLPZap {
             address(this),
             block.timestamp + 1
         );
+        IAsset[] memory assets = new IAsset[](2);
+        assets[0] = IAsset(address(RDNT));
+        assets[1] = IAsset(address(WETH));
+
+        uint256[] memory maxAmountsIn = new uint256[](2);
+        maxAmountsIn[0] = RDNT.balanceOf(address(this));
+        maxAmountsIn[1] = RDNT.balanceOf(address(this));
+
         // https://github.com/radiant-capital/v2/blob/main/contracts/radiant/zap/helpers/BalancerPoolHelper.sol
-        // Requests memory req = Requests({
-        //     assets: [address(WETH), address(RDNT)],
-        //     maxAmountsIn: [amountIn, _estimateRDNTout(swapped)],
-        //     minAmountsOut: [0, 0],
-        //     userData: ""
-        // });
-        // BALANCER.joinPool(balPool, address(this), address(this), )
+        bytes memory userDataEncoded = abi.encode(
+            IWeightedPool.JoinKind.EXACT_TOKENS_IN_FOR_BPT_OUT,
+            maxAmountsIn,
+            0
+        );
+        IVault.JoinPoolRequest memory inRequest = IVault.JoinPoolRequest(
+            assets,
+            maxAmountsIn,
+            userDataEncoded,
+            false
+        );
+        BALANCER.joinPool(poolId, address(this), address(this), inRequest);
+
+        rdLPVault.mint(msg.sender, BALANCER_LP.balanceOf(address(this)));
     }
 
     function ethZap() external payable returns (uint256) {
