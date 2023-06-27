@@ -49,7 +49,7 @@ contract rDLP is Initializable, ERC20Upgradeable, OwnableUpgradeable {
         if (dlp.allowance(address(this), address(mfd)) < amount) {
             dlp.safeApprove(address(mfd), type(uint256).max);
         }
-        mfd.stake(amount, address(this), 1);
+        mfd.stake(amount, address(this), 0);
     }
 
     function exit() external onlyOwner {

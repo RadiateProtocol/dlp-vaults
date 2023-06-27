@@ -40,7 +40,7 @@ contract dLPZap is Ownable {
         IVault(0xBA12222222228d8Ba445958a75a0704d566BF2C8);
 
     rDLP public constant rdLPVault =
-        rDLP(0x32dF62dc3aEd2cD6224193052Ce665DC18165841);
+        rDLP(0xC6dC7749781F7Ba1e9424704B2904f2F94D3eb63);
 
     bytes32 public constant balPool =
         0x32df62dc3aed2cd6224193052ce665dc181658410002000000000000000003bd;
@@ -67,7 +67,7 @@ contract dLPZap is Ownable {
         path[1] = address(RDNT);
         if (
             IERC20(address(WETH)).allowance(
-                address(uniswapRouter),
+                address(this),
                 address(uniswapRouter)
             ) == 0
         ) {
