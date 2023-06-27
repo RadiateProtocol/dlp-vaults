@@ -51,35 +51,54 @@ contract dLPZap is Ownable {
     constructor() Ownable() {}
 
     /// @dev Return estimated amount of Asset tokens to receive for given amount of tokens
-    function _estimateRDNTout(
-        uint256 _amtIn
+    function _estimateout(
+        uint256 _amtIn,
+        bool direction
     ) internal view returns (uint256 tokensOut) {
         (, int256 rdntAnswer, , , ) = rdntChainlink.latestRoundData(); // 8 decimals
-        uint256 priceInAsset = uint256(rdntAnswer);
+        uint256 priceinRdnt = uint256(rdntAnswer);
         (, int256 ethAnswer, , , ) = ethChainlink.latestRoundData(); // 8 decimals
         uint256 priceInEth = uint256(ethAnswer);
-        tokensOut = (priceInAsset * _amtIn) / priceInEth; // 18 decimals
+        if (direction) {
+            tokensOut = (_amtIn * priceInEth) / priceinRdnt; // 18 decimals
+        } else {
+            tokensOut = (priceinRdnt * _amtIn) / priceInEth; // 18 decimals
+        }
     }
 
-    function zap(uint256 amountIn) public returns (uint256) {
+    function zapRDNT(uint256 rdntAmount) public returns (uint256) {
+        RDNT.transferFrom(msg.sender, address(this), rdntAmount);
+        return _zap(rdntAmount, true);
+    }
+
+    function ethZap() external payable returns (uint256) {
+        // Wrap incoming ETH into WETH
+        WETH.deposit{value: msg.value}();
+        // Call zap function with WETH
+        uint256 wethAmount = WETH.balanceOf(address(this));
+        return _zap(wethAmount, false);
+    }
+
+    function _zap(uint256 amountIn, bool direction) internal returns (uint256) {
+        // true = RDNT -> ETH
+        // false = ETH -> RDNT
+
         address[] memory path = new address[](2);
-        path[0] = address(WETH);
-        path[1] = address(RDNT);
+        path[0] = direction ? address(RDNT) : address(WETH);
+        path[1] = direction ? address(WETH) : address(RDNT);
         if (
-            IERC20(address(WETH)).allowance(
-                address(this),
-                address(uniswapRouter)
-            ) == 0
+            IERC20(path[0]).allowance(address(this), address(uniswapRouter)) ==
+            0
         ) {
-            IERC20(address(WETH)).approve(
-                address(uniswapRouter),
-                type(uint256).max
-            );
+            IERC20(path[0]).approve(address(uniswapRouter), type(uint256).max);
         }
-        uint256 swapped = (amountIn * BALANCER_RATIO) / RATIO_DIVISOR;
+        uint256 swapped = direction
+            ? (amountIn * (RATIO_DIVISOR - BALANCER_RATIO)) / RATIO_DIVISOR
+            : (amountIn * BALANCER_RATIO) / RATIO_DIVISOR;
+
         uniswapRouter.swapExactTokensForTokens(
             swapped,
-            (_estimateRDNTout(swapped) * 99) / 100, // 1% slippage
+            (_estimateout(swapped, direction) * 99) / 100, // 1% slippage
             path,
             address(this),
             block.timestamp + 1
@@ -104,27 +123,42 @@ contract dLPZap is Ownable {
             userDataEncoded,
             false
         );
+        // Approvals
+        if (
+            IERC20(address(RDNT)).allowance(address(this), address(BALANCER)) ==
+            0
+        ) {
+            IERC20(address(RDNT)).approve(address(BALANCER), type(uint256).max);
+        }
+        if (
+            IERC20(address(WETH)).allowance(address(this), address(BALANCER)) ==
+            0
+        ) {
+            IERC20(address(WETH)).approve(address(BALANCER), type(uint256).max);
+        }
+
         BALANCER.joinPool(balPool, address(this), address(this), inRequest);
 
+        if (
+            IERC20(address(BALANCER_LP)).allowance(
+                address(this),
+                address(rdLPVault)
+            ) == 0
+        ) {
+            IERC20(address(BALANCER_LP)).approve(
+                address(rdLPVault),
+                type(uint256).max
+            );
+        }
+        uint256 lpAmount = BALANCER_LP.balanceOf(address(this));
         rdLPVault.mint(msg.sender, BALANCER_LP.balanceOf(address(this)));
-    }
-
-    function ethZap() external payable returns (uint256) {
-        // Wrap incoming ETH into WETH
-        WETH.deposit{value: msg.value}();
-        // Call zap function with WETH
-        uint256 wethAmount = WETH.balanceOf(address(this));
-        return zap(wethAmount);
+        return lpAmount;
     }
 
     function recoverERC20(
         address tokenAddress,
         uint256 tokenAmount
     ) external onlyOwner returns (bool) {
-        require(
-            msg.sender == address(rdLPVault),
-            "Only rdLPVault can recover tokens"
-        );
         IERC20(tokenAddress).safeTransfer(msg.sender, tokenAmount);
         return true;
     }
