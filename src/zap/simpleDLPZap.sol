@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.15;
 
-import {rDLP} from "../SimpleDLPVault.sol";
+import {rDLP} from "../policies/SimpleDLPVault.sol";
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -61,6 +61,9 @@ contract dLPZap is Ownable {
 			maxAmountsIn[0] = rdntAmt;
 			maxAmountsIn[1] = wethAmt;
 		}
+
+        RDNT.approve(address(BALANCER), rdntAmt);
+        WETH.approve(address(BALANCER), wethAmt);
 
 		bytes memory userDataEncoded = abi.encode(IWeightedPool.JoinKind.EXACT_TOKENS_IN_FOR_BPT_OUT, maxAmountsIn, 0);
 		IVault.JoinPoolRequest memory inRequest = IVault.JoinPoolRequest(assets, maxAmountsIn, userDataEncoded, false);
