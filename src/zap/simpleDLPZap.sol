@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.15;
 
-import {rDLP} from "../policies/SimpleDLPVault.sol";
+import {rDLP} from "../SimpleDLPVault.sol";
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -47,6 +47,8 @@ contract dLPZap is Ownable {
     function joinPool() internal returns (uint256 liquidity) {
         uint256 wethAmt = WETH.balanceOf(address(this));
         uint256 rdntAmt = RDNT.balanceOf(address(this));
+        WETH.approve(address(BALANCER), type(uint256).max);
+        RDNT.approve(address(BALANCER), type(uint256).max);
 
 		(address token0, address token1) = sortTokens(address(RDNT), address(WETH));
         IAsset[] memory assets = new IAsset[](2);
@@ -62,14 +64,12 @@ contract dLPZap is Ownable {
 			maxAmountsIn[1] = wethAmt;
 		}
 
-        RDNT.approve(address(BALANCER), rdntAmt);
-        WETH.approve(address(BALANCER), wethAmt);
-
 		bytes memory userDataEncoded = abi.encode(IWeightedPool.JoinKind.EXACT_TOKENS_IN_FOR_BPT_OUT, maxAmountsIn, 0);
 		IVault.JoinPoolRequest memory inRequest = IVault.JoinPoolRequest(assets, maxAmountsIn, userDataEncoded, false);
         BALANCER.joinPool(balPool, address(this), address(this), inRequest);
 
 		liquidity = BALANCER_LP.balanceOf(address(this));
+        BALANCER_LP.approve(address(rdLPVault), liquidity);
         rdLPVault.mint(msg.sender, liquidity);
     }    
 
