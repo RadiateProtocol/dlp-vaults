@@ -90,5 +90,9 @@ contract MerkleDistributor is Ownable {
         );
     }
 
-    event Claimed(uint256 index, address account, uint256 amount);
+    event Claimed(
+        uint256 indexed index,
+        address indexed account,
+        uint256 indexed amount
+    );
 }

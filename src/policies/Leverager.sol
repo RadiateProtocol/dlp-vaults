@@ -5,9 +5,9 @@ pragma abicoder v2;
 import "../Kernel.sol";
 import {DLPVault} from "./DLPVault.sol";
 import {RolesConsumer, ROLESv1} from "../modules/ROLES/OlympusRoles.sol";
-import {LeveragerVault, VAULTv1} from "../modules/VAULT/LeveragerVault.sol";
 import {Treasury} from "../modules/TRSRY/TRSRY.sol";
 import {ERC20} from "@solmate/tokens/ERC20.sol";
+import {ERC4626} from "@solmate/mixins/ERC4626.sol";
 import {SafeTransferLib} from "@solmate/utils/SafeTransferLib.sol";
 import "../interfaces/radiant-interfaces/ILendingPool.sol";
 import "../interfaces/aave/IPool.sol";
@@ -15,30 +15,25 @@ import "../interfaces/aave/IPool.sol";
 /// @title Leverager Contract
 /// @author w
 /// @dev All function calls are currently implemented without side effects
-contract Leverager is RolesConsumer, Policy {
+contract Leverager is RolesConsumer, Policy, ERC4626 {
     using SafeTransferLib for ERC20;
 
     // =========  EVENTS ========= //
 
-    event DLPHealthFactorChanged(uint256 healthfactor);
     event BorrowRatioChanged(uint256 borrowRatio);
-    event RewardsToAsset(uint256 fee, uint256 assetAmount);
     event Unloop(uint256 amount);
     event EmergencyUnloop(uint256 amount);
-    event NotEnoughDLP(uint256 required, uint256 borrowed);
 
     // =========  ERRORS ========= //
 
     error Leverager_VAULT_CAP_REACHED();
-    error Leverager_ONLY_SELF_INIT(address initiator);
-    error Leverager_ONLY_AAVE_LENDING_POOL(address caller);
     error Leverager_ERROR_BORROW_RATIO(uint256 borrowRatio);
-    error Leverager_NOT_ENOUGH_BORROW(uint256 shortfall);
+    error Leverager_CANNOT_WITHDRAW_AFTER_EMERGENCY_UNLOOP();
+    error Leverager_NO_ETHER();
 
     // =========  STATE ========= //
-    VAULTv1 internal VAULT;
     address internal TRSRY;
-
+    bool public emergencyUnlooping;
     ERC20 public constant DLP =
         ERC20(0x32dF62dc3aEd2cD6224193052Ce665DC18165841);
 
@@ -51,9 +46,8 @@ contract Leverager is RolesConsumer, Policy {
         IPool(0x794a61358D6845594F94dc1DB02A252b5b4814aD);
     uint256 public constant RATIO_DIVISOR = 1e6;
 
-    ERC20 public immutable asset;
-
     uint256 public immutable minAmountToInvest;
+    uint256 public amountInvested;
 
     DLPVault public dlpVault;
 
@@ -65,7 +59,14 @@ contract Leverager is RolesConsumer, Policy {
         DLPVault _dlpVault,
         ERC20 _asset,
         Kernel _kernel
-    ) Policy(_kernel) {
+    )
+        Policy(_kernel)
+        ERC4626(
+            _asset,
+            string(abi.encodePacked("Radiate ", _asset.name)),
+            string(abi.encodePacked("rd-", _asset.symbol))
+        )
+    {
         require(
             _minAmountToInvest > 0,
             "Leverager: minAmountToInvest must be greater than 0"
@@ -75,7 +76,6 @@ contract Leverager is RolesConsumer, Policy {
         loopCount = _loopCount;
         borrowRatio = _borrowRatio;
         dlpVault = _dlpVault;
-        asset = _asset;
     }
 
     //============================================================================================//
@@ -87,30 +87,20 @@ contract Leverager is RolesConsumer, Policy {
         override
         returns (Keycode[] memory dependencies)
     {
-        dependencies = new Keycode[](3);
+        dependencies = new Keycode[](2);
         dependencies[0] = toKeycode("ROLES");
-        dependencies[1] = toKeycode("LVGVT");
-        dependencies[2] = toKeycode("TRSRY");
+        dependencies[1] = toKeycode("TRSRY");
         ROLES = ROLESv1(getModuleAddress(dependencies[0]));
-        VAULT = VAULTv1(getModuleAddress(dependencies[1]));
-        TRSRY = getModuleAddress(dependencies[2]);
+        TRSRY = getModuleAddress(dependencies[1]);
     }
 
     function requestPermissions()
         external
-        view
+        pure
         override
         returns (Permissions[] memory requests)
     {
-        Keycode VAULT_KEYCODE = toKeycode("LVGVT");
-
-        requests = new Permissions[](6);
-        requests[0] = Permissions(VAULT_KEYCODE, VAULT._redeem.selector);
-        requests[1] = Permissions(VAULT_KEYCODE, VAULT._withdraw.selector);
-        requests[2] = Permissions(VAULT_KEYCODE, VAULT._mint.selector);
-        requests[3] = Permissions(VAULT_KEYCODE, VAULT._deposit.selector);
-        requests[4] = Permissions(VAULT_KEYCODE, VAULT._invest.selector);
-        requests[5] = Permissions(VAULT_KEYCODE, VAULT._divest.selector);
+        requests = new Permissions[](0);
     }
 
     //============================================================================================//
@@ -148,7 +138,18 @@ contract Leverager is RolesConsumer, Policy {
     /// For migrations, or in case of emergency
     function emergencyUnloop(uint256 _amount) external onlyRole("admin") {
         _unloop(_amount);
+        emergencyUnlooping = true;
         emit EmergencyUnloop(_amount);
+    }
+
+    function recoverERC20(
+        ERC20 token,
+        uint256 tokenAmount
+    ) external onlyRole("admin") {
+        if (token == asset && emergencyUnlooping) {
+            revert Leverager_CANNOT_WITHDRAW_AFTER_EMERGENCY_UNLOOP();
+        }
+        token.safeTransfer(msg.sender, tokenAmount);
     }
 
     //============================================================================================//
@@ -250,51 +251,16 @@ contract Leverager is RolesConsumer, Policy {
     //                               4626 OVERRIDES                                               //
     //============================================================================================//
 
-    function withdraw(
-        uint256 assets,
-        address receiver,
-        address owner
-    ) public returns (uint256) {
-        beforeWithdrawal(assets);
-        return VAULT._withdraw(assets, receiver, owner, msg.sender);
+    function totalAssets() public view override returns (uint256) {
+        return asset.balanceOf(address(this)) + amountInvested;
     }
 
-    function redeem(
-        uint256 shares,
-        address receiver,
-        address owner
-    ) public returns (uint256) {
-        uint256 assets_ = VAULT.previewRedeem(shares);
-        beforeWithdrawal(assets_);
-        return VAULT._withdraw(assets_, receiver, owner, msg.sender);
-    }
-
-    function deposit(uint256 assets, address owner) public returns (uint256) {
-        if (assets + VAULT.totalAssets() >= vaultCap) {
+    function afterDeposit(uint256 assets, uint256) internal override {
+        if (assets + totalAssets() >= vaultCap) {
             revert Leverager_VAULT_CAP_REACHED();
         }
-        uint256 shares_ = VAULT._deposit(assets, owner, msg.sender);
-        afterDeposit();
-        return shares_;
-    }
-
-    function mint(
-        uint256 shares,
-        address sender,
-        address owner
-    ) public returns (uint256) {
-        if (shares + VAULT.totalSupply() >= vaultCap) {
-            revert Leverager_VAULT_CAP_REACHED();
-        }
-        uint256 assets_ = VAULT._mint(shares, sender, owner);
-        afterDeposit();
-        return assets_;
-    }
-
-    function afterDeposit() internal {
-        uint256 cash_ = asset.balanceOf(address(VAULT));
+        uint256 cash_ = asset.balanceOf(address(this));
         if (cash_ >= minAmountToInvest) {
-            VAULT._invest(cash_);
             uint256 depositFee = dlpVault.feePercent();
             if (depositFee > 0) {
                 // Fee is necessary to prevent deposit and withdraw trolling
@@ -303,45 +269,18 @@ contract Leverager is RolesConsumer, Policy {
             }
             _loop();
         }
+        amountInvested += assets;
     }
 
-    function beforeWithdrawal(uint256 assets) internal {
-        if (assets > asset.balanceOf(address(VAULT))) {
+    function beforeWithdraw(uint256 assets, uint256) internal override {
+        if (assets > asset.balanceOf(address(this))) {
             uint256 amountToWithdraw = assets - asset.balanceOf(address(this));
             _unloop(amountToWithdraw);
-        }
-        VAULT._divest(assets);
-    }
-
-    // Lightly modified from Mudgen's Diamond-3
-    /// @dev Delegatecalls LeveragerVault any non core function call
-    //solhint-disable-next-line no-complex-fallback
-    fallback() external payable {
-        address vaultAddress = address(VAULT);
-        assembly {
-            // copy function selector and any arguments
-            calldatacopy(0, 0, calldatasize())
-            // execute function call using the facet
-            let result := delegatecall(
-                gas(),
-                vaultAddress,
-                0,
-                calldatasize(),
-                0,
-                0
-            )
-            // get any return value
-            returndatacopy(0, 0, returndatasize())
-            // return any return value or error back to the caller
-            switch result
-            case 0 {
-                revert(0, returndatasize())
-            }
-            default {
-                return(0, returndatasize())
-            }
+            amountInvested -= amountToWithdraw;
         }
     }
 
-    receive() external payable {}
+    receive() external payable {
+        revert Leverager_NO_ETHER();
+    }
 }

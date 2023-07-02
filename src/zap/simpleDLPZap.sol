@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.15;
 
-import {rDLP} from "../SimpleDLPVault.sol";
+import {rDLP} from "../policies/SimpleDLPVault.sol";
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -35,11 +35,7 @@ contract dLPZap is Ownable {
     constructor() Ownable() {}
 
     function zap(uint256 rdntAmt) external payable returns (uint256) {
-        RDNT.transferFrom(
-            msg.sender,
-            address(this),
-            rdntAmt
-        );
+        RDNT.transferFrom(msg.sender, address(this), rdntAmt);
         WETH.deposit{value: msg.value}();
         return joinPool();
     }
@@ -50,34 +46,51 @@ contract dLPZap is Ownable {
         WETH.approve(address(BALANCER), type(uint256).max);
         RDNT.approve(address(BALANCER), type(uint256).max);
 
-		(address token0, address token1) = sortTokens(address(RDNT), address(WETH));
+        (address token0, address token1) = sortTokens(
+            address(RDNT),
+            address(WETH)
+        );
         IAsset[] memory assets = new IAsset[](2);
         assets[0] = IAsset(token0);
         assets[1] = IAsset(token1);
 
         uint256[] memory maxAmountsIn = new uint256[](2);
-		if (token0 == address(WETH)) {
-			maxAmountsIn[0] = wethAmt;
-			maxAmountsIn[1] = rdntAmt;
-		} else {
-			maxAmountsIn[0] = rdntAmt;
-			maxAmountsIn[1] = wethAmt;
-		}
+        if (token0 == address(WETH)) {
+            maxAmountsIn[0] = wethAmt;
+            maxAmountsIn[1] = rdntAmt;
+        } else {
+            maxAmountsIn[0] = rdntAmt;
+            maxAmountsIn[1] = wethAmt;
+        }
 
-		bytes memory userDataEncoded = abi.encode(IWeightedPool.JoinKind.EXACT_TOKENS_IN_FOR_BPT_OUT, maxAmountsIn, 0);
-		IVault.JoinPoolRequest memory inRequest = IVault.JoinPoolRequest(assets, maxAmountsIn, userDataEncoded, false);
+        bytes memory userDataEncoded = abi.encode(
+            IWeightedPool.JoinKind.EXACT_TOKENS_IN_FOR_BPT_OUT,
+            maxAmountsIn,
+            0
+        );
+        IVault.JoinPoolRequest memory inRequest = IVault.JoinPoolRequest(
+            assets,
+            maxAmountsIn,
+            userDataEncoded,
+            false
+        );
         BALANCER.joinPool(balPool, address(this), address(this), inRequest);
 
-		liquidity = BALANCER_LP.balanceOf(address(this));
+        liquidity = BALANCER_LP.balanceOf(address(this));
         BALANCER_LP.approve(address(rdLPVault), liquidity);
         rdLPVault.mint(msg.sender, liquidity);
-    }    
+    }
 
-	function sortTokens(address tokenA, address tokenB) internal pure returns (address token0, address token1) {
-		require(tokenA != tokenB, "identical addresses");
-		(token0, token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
-		require(token0 != address(0), "address zero");
-	}
+    function sortTokens(
+        address tokenA,
+        address tokenB
+    ) internal pure returns (address token0, address token1) {
+        require(tokenA != tokenB, "identical addresses");
+        (token0, token1) = tokenA < tokenB
+            ? (tokenA, tokenB)
+            : (tokenB, tokenA);
+        require(token0 != address(0), "address zero");
+    }
 
     function recoverERC20(
         address tokenAddress,

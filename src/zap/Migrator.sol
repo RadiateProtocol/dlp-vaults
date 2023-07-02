@@ -6,6 +6,7 @@ import "../interfaces/aave/IPool.sol";
 import "../interfaces/radiant-interfaces/ILendingPool.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC20} from "@solmate/tokens/ERC20.sol";
+import {IWETH} from "../interfaces/balancer/IVault.sol";
 
 contract MigratorZap is IFlashLoanSimpleReceiver, Ownable {
     // =========  EVENTS ========= //
@@ -24,6 +25,9 @@ contract MigratorZap is IFlashLoanSimpleReceiver, Ownable {
 
     ILendingPool public constant radiantLendingPool =
         ILendingPool(0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1);
+
+    IWETH public constant weth =
+        IWETH(0x82aF49447D8a07e3bd95BD0d56f35241523fBab1);
 
     mapping(address => Leverager) public leveragers;
 
@@ -46,6 +50,11 @@ contract MigratorZap is IFlashLoanSimpleReceiver, Ownable {
         Leverager leverager = leveragers[_asset];
         leverager.deposit(ERC20(_asset).balanceOf(address(this)), msg.sender);
         emit Migrate(msg.sender, _amount, _asset);
+    }
+
+    function migrateNative() public payable {
+        weth.deposit{value: msg.value}();
+        migrate(msg.value, address(weth));
     }
 
     function executeOperation(

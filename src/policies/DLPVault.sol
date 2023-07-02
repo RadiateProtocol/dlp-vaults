@@ -3,8 +3,8 @@ pragma solidity 0.8.15;
 
 import "../Kernel.sol";
 import {RolesConsumer, ROLESv1} from "../modules/ROLES/OlympusRoles.sol";
-import {ERC4626} from "@solmate/mixins/ERC4626.sol";
 import {ERC20} from "@solmate/tokens/ERC20.sol";
+import "lib/openzeppelin-contracts-upgradeable/contracts/token/ERC20/extensions/ERC4626Upgradeable.sol";
 
 import "../interfaces/radiant-interfaces/IEligibilityDataProvider.sol";
 import "../interfaces/radiant-interfaces/IMultiFeeDistribution.sol";
@@ -15,12 +15,10 @@ import "../interfaces/radiant-interfaces/ICreditDelegationToken.sol";
 
 import "../interfaces/aave/IPool.sol";
 
-contract DLPVault is Policy, RolesConsumer, ERC4626 {
+contract DLPVault is ERC4626Upgradeable, RolesConsumer {
     // =========  EVENTS ========= //
-    event DefaultRelockIndexChanged(uint256 defaultLockIndex);
     event RewardAdded(uint256 reward);
     event RewardPaid(address indexed user, uint256 reward);
-    event RewardsDurationUpdated(uint256 newDuration);
     event FeePercentUpdated(uint256 feePercent);
     event RewardBaseTokensUpdated(address[] rewardBaseTokens);
     event WithdrawalQueued(
@@ -38,16 +36,12 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     error DLPVault_VaultCapExceeded(uint256 _vaultCap);
 
     // =========  STATE ========= //
-    ERC20 public immutable DLPAddress;
-    ERC20 public immutable rewardsToken;
-    address[] public rewardBaseTokens;
-    uint256 public amountStaked;
-    uint256 public vaultCap;
-    uint256 public feePercent; // Deposit Fee
-
-    uint256 public withdrawalQueueIndex;
-
-    IMultiFeeDistribution public mfd =
+    // Constants
+    ERC20 public constant DLPAddress =
+        ERC20(0x32dF62dc3aEd2cD6224193052Ce665DC18165841);
+    ERC20 public constant rewardsToken =
+        ERC20(0x82aF49447D8a07e3bd95BD0d56f35241523fBab1);
+    IMultiFeeDistribution constant mfd =
         IMultiFeeDistribution(0x76ba3eC5f5adBf1C58c91e86502232317EeA72dE);
 
     /// @notice Aave lending pool address (for flashloans)
@@ -58,7 +52,16 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     ILendingPool public constant lendingPool =
         ILendingPool(0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1);
 
-    uint256 public defaultLockIndex = 1;
+    uint256 public constant defaultLockIndex = 0; // 1 month lock
+
+    // State
+    Kernel kernel;
+    address[] public rewardBaseTokens;
+    uint256 public amountStaked;
+    uint256 public vaultCap;
+    uint256 public feePercent; // Deposit Fee
+
+    uint256 public withdrawalQueueIndex;
 
     struct WithdrawalQueue {
         address caller;
@@ -69,33 +72,35 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
 
     WithdrawalQueue[] public withdrawalQueue;
 
-    constructor(
-        ERC20 _asset,
-        ERC20 _rewardsToken,
-        Kernel _kernel
-    ) ERC4626(_asset, "Radiate-DLP Vault", "RAD-DLP") Policy(_kernel) {
-        DLPAddress = _asset;
-        rewardsToken = _rewardsToken; // WETH
+    function initialize(Kernel _kernel) public {
+        kernel = _kernel;
+        __ERC4626_init(ERC20Upgradeable(address(DLPAddress)));
     }
 
     //============================================================================================//
     //                                     DEFAULT OVERRIDES                                      //
     //============================================================================================//
+    function changeKernel(Kernel newKernel_) external {
+        require(msg.sender == address(kernel), "DLPVault_onlyKernel"); //todo customerror
+        kernel = newKernel_;
+    }
+
+    function isActive() external view returns (bool) {
+        return kernel.isPolicyActive(Policy(address(this)));
+    }
 
     function configureDependencies()
         external
-        override
         returns (Keycode[] memory dependencies)
     {
         dependencies = new Keycode[](1);
         dependencies[0] = toKeycode("ROLES");
-        ROLES = ROLESv1(getModuleAddress(dependencies[0]));
+        ROLES = ROLESv1(address(kernel.getModuleForKeycode(dependencies[0])));
     }
 
     function requestPermissions()
         external
         pure
-        override
         returns (Permissions[] memory requests)
     {
         requests = new Permissions[](0);
@@ -140,15 +145,6 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     ) external onlyRole("admin") {
         _token.approveDelegation(_leverager, 0);
     }
-
-    function changeDefaultLockIndex(uint256 _index) external onlyRole("admin") {
-        defaultLockIndex = _index;
-        emit DefaultRelockIndexChanged(_index);
-    }
-
-    // function setAutoRelock(bool status) external onlyRole("admin") {
-    //     mfd.setRelock(status);
-    // }
 
     function withdrawTokens(ERC20 _token) external onlyRole("admin") {
         if (_token == DLPAddress) {
@@ -209,8 +205,8 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
             IERC20(_asset).approve(address(aaveLendingPool), type(uint256).max);
         }
 
-        lendingPool.repay(address(asset), amount, 2, address(this));
-        lendingPool.withdraw(address(asset), amount, initiator);
+        lendingPool.repay(_asset, amount, 2, address(this));
+        lendingPool.withdraw(_asset, amount, initiator);
         return true;
     }
 
@@ -259,10 +255,9 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     ) public override updateReward(owner) returns (uint256) {
         getReward(owner);
         if (msg.sender != owner) {
-            uint256 allowed = allowance[owner][msg.sender]; // Saves gas for limited approvals.
-
+            uint256 allowed = allowance(owner, msg.sender); // Saves gas for limited approvals.
             if (allowed != type(uint256).max) {
-                allowance[owner][msg.sender] = allowed - assets;
+                _spendAllowance(owner, msg.sender, allowed - assets);
             }
         }
 
@@ -278,7 +273,7 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
 
             emit Withdraw(msg.sender, receiver, owner, assets, assets);
 
-            asset.transfer(receiver, assets);
+            DLPAddress.transfer(receiver, assets);
             return assets;
         } else {
             // Add to withdrawal queue
@@ -312,9 +307,9 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
                 // Approval check already done in withdraw()
 
                 // If user balance dips below withdrawal amount, their withdraw request gets cancelled
-                if (balanceOf[queueItem.owner] >= queueItem.assets) {
+                if (balanceOf(queueItem.owner) >= queueItem.assets) {
                     _burn(queueItem.owner, queueItem.assets);
-                    asset.transfer(queueItem.receiver, queueItem.assets);
+                    DLPAddress.transfer(queueItem.receiver, queueItem.assets);
                     amountStaked -= queueItem.assets;
 
                     emit Withdraw(
@@ -365,18 +360,15 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     function transfer(
         address to,
         uint256 amount
-    ) public override updateReward(to) returns (bool) {
+    )
+        public
+        override(IERC20Upgradeable, ERC20Upgradeable)
+        updateReward(to)
+        returns (bool)
+    {
         getReward();
 
-        balanceOf[msg.sender] -= amount;
-
-        // Cannot overflow because the sum of all user
-        // balances can't exceed the max uint256 value.
-        unchecked {
-            balanceOf[to] += amount;
-        }
-
-        emit Transfer(msg.sender, to, amount);
+        _transfer(msg.sender, to, amount);
 
         return true;
     }
@@ -385,24 +377,14 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
         address from,
         address to,
         uint256 amount
-    ) public override updateReward(to) returns (bool) {
+    )
+        public
+        override(IERC20Upgradeable, ERC20Upgradeable)
+        updateReward(to)
+        returns (bool)
+    {
         getReward(from);
-
-        uint256 allowed = allowance[from][msg.sender]; // Saves gas for limited approvals.
-
-        if (allowed != type(uint256).max)
-            allowance[from][msg.sender] = allowed - amount;
-
-        balanceOf[from] -= amount;
-
-        // Cannot overflow because the sum of all user
-        // balances can't exceed the max uint256 value.
-        unchecked {
-            balanceOf[to] += amount;
-        }
-
-        emit Transfer(from, to, amount);
-
+        _transfer(from, to, amount);
         return true;
     }
 
@@ -442,19 +424,19 @@ contract DLPVault is Policy, RolesConsumer, ERC4626 {
     }
 
     function rewardPerToken() public view returns (uint) {
-        if (totalSupply == 0) {
+        if (totalSupply() == 0) {
             return rewardPerTokenStored;
         }
 
         return
             rewardPerTokenStored +
             (rewardRate * (lastTimeRewardApplicable() - updatedAt) * 1e18) /
-            totalSupply;
+            totalSupply();
     }
 
     function earned(address _account) public view returns (uint) {
         return
-            ((balanceOf[_account] *
+            ((balanceOf(_account) *
                 (rewardPerToken() - userRewardPerTokenPaid[_account])) / 1e18) +
             rewards[_account];
     }
