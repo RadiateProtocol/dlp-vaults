@@ -55,6 +55,7 @@ contract DLPVault is ERC4626Upgradeable, RolesConsumer {
     uint256 public constant defaultLockIndex = 0; // 1 month lock
 
     // State
+    bytes32[50] private _gap;
     Kernel kernel;
     address[] public rewardBaseTokens;
     uint256 public amountStaked;
