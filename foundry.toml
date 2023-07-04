@@ -2,6 +2,9 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+
+fs_permissions = [{ access = "read-write", path = "./"}]
+
 [rpc_endpoints]
 sepolia = "${SEPOLIA_RPC_URL}"
 solc_version="0.8.15"

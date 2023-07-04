@@ -73,7 +73,7 @@ contract DLPVault is ERC4626Upgradeable, RolesConsumer {
 
     WithdrawalQueue[] public withdrawalQueue;
 
-    function initialize(Kernel _kernel) public {
+    function initialize(Kernel _kernel) public initializer {
         kernel = _kernel;
         __ERC4626_init(ERC20Upgradeable(address(DLPAddress)));
     }
