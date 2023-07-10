@@ -26,7 +26,7 @@ contract GelatoKeeper {
     ERC20 public constant WETH =
         ERC20(0x82aF49447D8a07e3bd95BD0d56f35241523fBab1);
     uint256 public dlpAPY;
-    address public immutable owner;
+    address public owner;
 
     constructor(IUniswapV2Router02 _uniswapRouter) {
         uniswapRouter = _uniswapRouter;
@@ -73,6 +73,11 @@ contract GelatoKeeper {
 
     function getAPY(ERC4626 _vault) external view returns (uint256) {
         return vaultAPY[_vault];
+    }
+
+    function transferOwner(address _owner) external {
+        require(msg.sender == owner, "Only owner can transfer ownership");
+        owner = _owner;
     }
 
     function processATokens() internal {
