@@ -98,11 +98,13 @@ contract GelatoKeeper is Ownable {
 
         rdLP.claim();
         // convert any non aToken rewards to aTokens
+        // ??? we convert any aTokens to underlying asset
         processATokens();
         // Pay down tokens where underlying is greater than reward debt, and then receive rewards needed
         uint256[] memory rewardsNeeded = payAndCalculate();
 
         // Process rdLP rewards
+        // TODO: @wooark rewrite with custom calculation
         uint256 rewardAmt = (rdLP.totalAssets() * dlpAPY) / RATIO_DIVISOR >=
             WETH.balanceOf(address(this))
             ? WETH.balanceOf(address(this))
@@ -189,6 +191,7 @@ contract GelatoKeeper is Ownable {
                 RATIO_DIVISOR;
 
             // pay out balance with any rewards
+            // TODO: @wooark why is this?
             uint256 rewardPayoff = rewardAmt[i] <=
                 rewardTokens[i].balanceOf(address(this))
                 ? rewardAmt[i]

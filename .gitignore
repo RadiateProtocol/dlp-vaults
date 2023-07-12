@@ -1,6 +1,7 @@
 # Compiler files
 cache/
 out/
+json/
 
 # Ignores development broadcast logs
 !/broadcast
