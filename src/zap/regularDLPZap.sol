@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.15;
 
-import {rDLP} from "../policies/SimpleDLPVault.sol";
+import {DLPVault} from "../policies/DLPVault.sol";
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -10,7 +10,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import {IVault, IWETH, IAsset} from "../interfaces/balancer/IVault.sol";
 import {IWeightedPool} from "../interfaces/balancer/IWeightedPoolFactory.sol";
 
-contract SimpleDLPZap is Ownable {
+contract RegularDLPZap is Ownable {
     using SafeERC20 for IERC20;
     uint256 public constant RATIO_DIVISOR = 10000;
 
@@ -23,8 +23,8 @@ contract SimpleDLPZap is Ownable {
     IVault public constant BALANCER =
         IVault(0xBA12222222228d8Ba445958a75a0704d566BF2C8);
 
-    rDLP public constant rdLPVault =
-        rDLP(0xC6dC7749781F7Ba1e9424704B2904f2F94D3eb63);
+    DLPVault public constant rdLPVault =
+        DLPVault(0x09E1C5d000C9E12db9b349662aAc6c9E2ACfa7f6);
 
     bytes32 public constant balPool =
         0x32df62dc3aed2cd6224193052ce665dc181658410002000000000000000003bd;
@@ -78,7 +78,7 @@ contract SimpleDLPZap is Ownable {
 
         liquidity = BALANCER_LP.balanceOf(address(this));
         BALANCER_LP.approve(address(rdLPVault), liquidity);
-        rdLPVault.mint(msg.sender, liquidity);
+        rdLPVault.deposit(liquidity, msg.sender);
     }
 
     function sortTokens(
