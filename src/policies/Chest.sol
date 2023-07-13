@@ -39,7 +39,8 @@ contract Chest is Policy, RolesConsumer {
     function withdraw(
         ERC20 _token,
         uint256 _amount
-    ) external onlyRole("ADMIN") {
+    ) external onlyRole("admin") {
         TRSRY.withdraw(_token, _amount);
+        _token.transfer(msg.sender, _amount);
     }
 }

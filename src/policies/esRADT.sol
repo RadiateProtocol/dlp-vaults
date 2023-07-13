@@ -61,15 +61,6 @@ contract esRADT is ERC20("Escrowed RADT", "esRADT"), Ownable, ReentrancyGuard {
         return true;
     }
 
-    function transfer(
-        address recipient,
-        uint256 amount
-    ) public override returns (bool) {
-        require(whitelist[msg.sender], "Not whitelisted");
-        _transfer(msg.sender, recipient, amount);
-        return true;
-    }
-
     function claimableTokens(address _address) external view returns (uint256) {
         uint256 timePass = block.timestamp.sub(
             userInfo[_address].lastInteractionTime
@@ -135,7 +126,7 @@ contract esRADT is ERC20("Escrowed RADT", "esRADT"), Ownable, ReentrancyGuard {
     }
 
     function exitEarly() external nonReentrant returns (uint256) {
-        claim(); // Claim outstanding tokens first
+        // 50% penalty for early exit – claim rewards first and then exit early
         uint256 claimable;
         if (whitelist[msg.sender] == true) {
             // Bypass penalty for whitelisted addresses
@@ -143,8 +134,6 @@ contract esRADT is ERC20("Escrowed RADT", "esRADT"), Ownable, ReentrancyGuard {
             userInfo[msg.sender].VestPeriod = 0;
             userInfo[msg.sender].totalVested = 0;
             userInfo[msg.sender].lastInteractionTime = block.timestamp;
-            RADT.transfer(msg.sender, claimable);
-            return claimable;
         }
         uint256 timePass = block.timestamp.sub(
             userInfo[msg.sender].lastInteractionTime
@@ -160,9 +149,9 @@ contract esRADT is ERC20("Escrowed RADT", "esRADT"), Ownable, ReentrancyGuard {
             userInfo[msg.sender].VestPeriod = 0;
             userInfo[msg.sender].totalVested = 0;
             userInfo[msg.sender].lastInteractionTime = block.timestamp;
-            RADT.transfer(msg.sender, claimable);
-            return claimable;
         }
+        RADT.transfer(msg.sender, claimable);
+        return claimable;
     }
 
     function remainingVestedTime() external view returns (uint256) {
